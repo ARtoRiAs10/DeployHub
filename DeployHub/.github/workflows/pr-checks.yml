@@ -1,0 +1,242 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Fast smoke test — runs on every PR commit, results in < 60s
+  # ─────────────────────────────────────────────────────────────────────────
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run unit tests (fast feedback)
+        working-directory: backend
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Detect changes — only run relevant jobs
+  # ─────────────────────────────────────────────────────────────────────────
+  changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      backend:  ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      detector: ${{ steps.filter.outputs.detector }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/src/**'
+              - 'backend/tests/**'
+              - 'backend/package*.json'
+            frontend:
+              - 'frontend/src/**'
+              - 'frontend/package*.json'
+            detector:
+              - 'backend/src/services/detector/**'
+              - 'backend/src/services/frameworkDetector.js'
+              - 'backend/src/services/dockerfileGenerator.js'
+              - 'backend/src/workers/deploymentWorker.js'
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Full backend test suite — only when backend files changed
+  # ─────────────────────────────────────────────────────────────────────────
+  backend-full:
+    name: Backend Full Suite
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+        working-directory: backend
+
+      - name: Unit tests
+        working-directory: backend
+        run: npm run test:unit
+        env: { NODE_ENV: test }
+
+      - name: Integration tests
+        working-directory: backend
+        run: npm run test:integration
+        env: { NODE_ENV: test }
+
+      - name: BDD tests
+        working-directory: backend
+        run: npm run test:bdd
+        env: { NODE_ENV: test }
+
+      - name: Coverage check (must meet thresholds)
+        working-directory: backend
+        run: npm run test:ci
+        env: { NODE_ENV: test }
+
+      - name: Coverage summary comment
+        uses: ArtiomTr/jest-coverage-report-action@v2
+        if: always()
+        with:
+          working-directory: backend
+          coverage-file: backend/coverage/report.json
+          base-coverage-file: backend/coverage/report.json
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Critical detector + routing check — runs whenever core logic changes
+  # ─────────────────────────────────────────────────────────────────────────
+  detector-regression:
+    name: Detector Regression (Core Logic)
+    needs: changes
+    if: needs.changes.outputs.detector == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+        working-directory: backend
+
+      - name: Run detector unit tests
+        working-directory: backend
+        run: npx jest --testPathPattern="detector|dockerfileGenerator|deploymentWorker" --runInBand --forceExit --verbose
+        env: { NODE_ENV: test }
+
+      - name: Run BDD scenarios
+        working-directory: backend
+        run: npm run test:bdd
+        env: { NODE_ENV: test }
+
+      - name: Assert isBackend routing is correct for all frameworks
+        working-directory: backend
+        run: |
+          node -e "
+          const { detectFromCuratedList } = require('./src/services/detector/curated');
+          const os = require('os'), path = require('path');
+          const fs = require('fs-extra');
+
+          const CASES = [
+            // [files, expectedFramework, expectedIsBackend]
+            [{ 'package.json': JSON.stringify({ dependencies:{ next:'^14' }, scripts:{ build:'next build' } }) }, 'nextjs', true ],
+            [{ 'package.json': JSON.stringify({ dependencies:{ nuxt:'^3' }, scripts:{ build:'nuxt build' } }) },  'nuxt',   true ],
+            [{ 'package.json': JSON.stringify({ devDependencies:{ vite:'^5', '@vitejs/plugin-react':'^4' }, scripts:{ build:'vite build' } }) }, 'vite', false ],
+            [{ 'package.json': JSON.stringify({ dependencies:{ vue:'^3' }, devDependencies:{ vite:'^5', '@vitejs/plugin-vue':'^5' }, scripts:{ build:'vite build' } }) }, 'vite', false ],
+            [{ 'package.json': JSON.stringify({ devDependencies:{ '@vue/cli-service':'^5' }, scripts:{ build:'vue-cli-service build' } }) }, 'vite', false ],
+            [{ 'go.mod':'module x\n\ngo 1.22\n', 'cmd/main.go':'package main\nfunc main(){}' }, 'go', true ],
+            [{ 'requirements.txt':'fastapi\nuvicorn\n', 'main.py':'from fastapi import FastAPI' }, 'fastapi', true ],
+          ];
+
+          async function run() {
+            let passed=0, failed=0;
+            for (const [files, expFw, expIsBackend] of CASES) {
+              const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dh-'));
+              try {
+                for (const [f, c] of Object.entries(files)) {
+                  await fs.ensureDir(path.dirname(path.join(dir, f)));
+                  await fs.writeFile(path.join(dir, f), c);
+                }
+                const r = await detectFromCuratedList(dir);
+                const fw = r?.framework; const ib = r?.isBackend;
+                const ok = fw === expFw && ib === expIsBackend;
+                if (ok) { console.log('PASS', expFw.padEnd(20), 'isBackend=' + ib); passed++; }
+                else { console.error('FAIL', expFw.padEnd(20), 'expected isBackend=' + expIsBackend + ' got isBackend=' + ib + ', framework=' + fw); failed++; }
+              } finally { await fs.remove(dir); }
+            }
+            console.log(\`\nResult: \${passed}/\${CASES.length} passed\`);
+            process.exit(failed > 0 ? 1 : 0);
+          }
+          run();
+          "
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Frontend type check — only when frontend files changed
+  # ─────────────────────────────────────────────────────────────────────────
+  frontend-typecheck:
+    name: Frontend TypeScript
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      - name: TypeScript check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        working-directory: frontend
+        run: npx next lint
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PR gate — all applicable checks must pass
+  # ─────────────────────────────────────────────────────────────────────────
+  pr-gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    needs: [smoke-tests, backend-full, detector-regression, frontend-typecheck]
+    if: always()
+    steps:
+      - name: Evaluate results
+        run: |
+          # smoke-tests always runs — must pass
+          if [[ "${{ needs.smoke-tests.result }}" != "success" ]]; then
+            echo "Smoke tests failed"
+            exit 1
+          fi
+
+          # Other jobs may be skipped (no relevant changes) — skipped is OK, failed is not
+          for job in backend-full detector-regression frontend-typecheck; do
+            result=$(echo '${{ toJSON(needs) }}' | node -e "
+              const n=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              const j=process.argv[1];
+              console.log(n[j]?.result||'skipped');
+            " "$job" 2>/dev/null || echo "skipped")
+            if [[ "$result" == "failure" ]] || [[ "$result" == "cancelled" ]]; then
+              echo "Job $job failed with result: $result"
+              exit 1
+            fi
+          done
+          echo "PR gate passed"

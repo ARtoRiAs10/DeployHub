@@ -1,0 +1,22 @@
+# DeployHub Backend — Production Dockerfile
+# Build: docker build -f Dockerfile.backend -t deployhub-backend .
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
+RUN npx prisma generate
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+# Install curl for health check
+RUN apk --no-cache add curl
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/prisma ./prisma
+COPY package.json ./
+EXPOSE 4000
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+  CMD curl -f http://localhost:4000/health || exit 1
+CMD ["node", "src/index.js"]

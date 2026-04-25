@@ -1,39 +1,47 @@
 {
   "name": "deployhub-backend",
   "version": "1.0.0",
-  "description": "DeployHub Backend API",
   "main": "src/index.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "dev": "nodemon src/index.js",
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "generate": "prisma generate",
+    "test": "jest --config jest.config.js --forceExit",
+    "test:unit": "jest --config jest.config.js --testPathPattern=tests/unit --forceExit",
+    "test:integration": "jest --config jest.config.js --testPathPattern=tests/integration --forceExit",
+    "test:bdd": "jest --config jest.config.js --testPathPattern=tests/bdd --forceExit",
+    "test:coverage": "jest --config jest.config.js --coverage --forceExit",
+    "test:ci": "jest --config jest.config.js --forceExit --ci --coverage --coverageReporters=lcov --coverageReporters=json --coverageReporters=text"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.490.0",
-    "@aws-sdk/lib-storage": "^3.490.0",
-    "@clerk/backend": "^1.0.0",
-    "@clerk/clerk-sdk-node": "^4.13.23",
-    "@prisma/client": "^5.8.0",
-    "archiver": "^6.0.1",
+    "@aws-sdk/client-ecr": "^3.540.0",
+    "@aws-sdk/client-s3": "^3.540.0",
+    "@aws-sdk/client-ssm": "^3.540.0",
+    "@aws-sdk/lib-storage": "^3.540.0",
+    "@clerk/clerk-sdk-node": "^5.0.0",
+    "@prisma/client": "^5.10.2",
     "bull": "^4.12.2",
     "cors": "^2.8.5",
     "dockerode": "^4.0.2",
-    "dotenv": "^16.4.1",
-    "express": "^4.18.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.3",
     "express-async-errors": "^3.1.1",
-    "fs-extra": "^11.2.0",
+    "fs-extra": "^11.3.4",
     "mime-types": "^2.1.35",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "simple-git": "^3.22.0",
     "tar-fs": "^3.0.5",
-    "uuid": "^9.0.1",
-    "winston": "^3.11.0"
+    "winston": "^3.12.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.3",
-    "prisma": "^5.8.0"
+    "@jest/globals": "^29.7.0",
+    "jest": "^29.7.0",
+    "jest-cucumber": "^4.5.0",
+    "nodemon": "^3.1.0",
+    "prisma": "^5.10.2",
+    "supertest": "^6.3.4"
   }
 }

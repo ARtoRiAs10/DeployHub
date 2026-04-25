@@ -1,171 +1,119 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import Link from 'next/link'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { formatDate, STATUS_COLORS, FRAMEWORK_LABELS } from '@/lib/utils'
-import { FolderGit2, Rocket, CheckCircle, XCircle, Clock, Plus, ExternalLink } from 'lucide-react'
+import { formatDate, formatDuration, STATUS_COLORS, FRAMEWORK_ICONS, DETECTION_METHOD_LABELS, DETECTION_METHOD_COLORS } from '@/lib/utils'
+import { FolderGit2, Rocket, CheckCircle, XCircle, Zap, ExternalLink, Plus, Server, HardDrive } from 'lucide-react'
+
+function Stat({ label, value, color, icon }: any) {
+  return (
+    <div className="rounded-xl p-5 border" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-medium uppercase tracking-wider" style={{color:'var(--text3)'}}>{label}</span>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{background:color+'20',color}}>{icon}</div>
+      </div>
+      <div className="text-3xl font-bold tracking-tight">{value}</div>
+    </div>
+  )
+}
 
 export default function DashboardPage() {
   const { getToken } = useAuth()
   const [projects, setProjects] = useState<any[]>([])
-  const [recentDeployments, setRecentDeployments] = useState<any[]>([])
+  const [deployments, setDeployments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
       try {
-        const token = await getToken()
-        if (!token) return
-        const [p, d] = await Promise.all([
-          api.getProjects(token),
-          api.getDeployments({ limit: 5 }, token),
-        ])
-        setProjects(p)
-        setRecentDeployments(d)
-      } finally {
-        setLoading(false)
-      }
+        const token = await getToken(); if (!token) return
+        const [p, d] = await Promise.all([api.getProjects(token), api.getDeployments({ limit:8 }, token)])
+        setProjects(p); setDeployments(d)
+      } finally { setLoading(false) }
     }
     load()
   }, [getToken])
 
-  const stats = {
-    total: projects.length,
-    deployments: recentDeployments.length,
-    success: recentDeployments.filter((d) => d.status === 'SUCCESS').length,
-    failed: recentDeployments.filter((d) => d.status === 'FAILED').length,
-  }
+  const success = deployments.filter(d => d.status === 'SUCCESS').length
+  const failed  = deployments.filter(d => d.status === 'FAILED').length
+  const active  = deployments.filter(d => ['QUEUED','BUILDING'].includes(d.status)).length
 
   return (
-    <div className="p-8">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="p-8 fade-in">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold">Overview</h1>
-          <p className="text-white/50 text-sm mt-1">Your deployment dashboard</p>
+          <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
+          <p className="text-sm mt-1" style={{color:'var(--text2)'}}>Your deployment dashboard</p>
         </div>
         <Link href="/dashboard/projects">
-          <Button className="gap-2">
-            <Plus className="w-4 h-4" /> New Project
-          </Button>
+          <button className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-90" style={{background:'var(--accent)',color:'#fff'}}>
+            <Plus className="w-4 h-4"/> New Project
+          </button>
         </Link>
       </div>
-
-      {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'Projects', value: stats.total, icon: <FolderGit2 className="w-5 h-5 text-blue-400" /> },
-          { label: 'Deployments', value: stats.deployments, icon: <Rocket className="w-5 h-5 text-purple-400" /> },
-          { label: 'Successful', value: stats.success, icon: <CheckCircle className="w-5 h-5 text-green-400" /> },
-          { label: 'Failed', value: stats.failed, icon: <XCircle className="w-5 h-5 text-red-400" /> },
-        ].map((s) => (
-          <Card key={s.label} className="bg-white/5 border-white/10">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-white/50">{s.label}</span>
-                {s.icon}
-              </div>
-              <div className="text-3xl font-bold">{loading ? '—' : s.value}</div>
-            </CardContent>
-          </Card>
-        ))}
+        <Stat label="Projects"   value={loading?'—':projects.length}  color="var(--accent)"  icon={<FolderGit2 className="w-4 h-4"/>}/>
+        <Stat label="Active"     value={loading?'—':active}           color="var(--yellow)"  icon={<Zap className="w-4 h-4"/>}/>
+        <Stat label="Successful" value={loading?'—':success}          color="var(--green)"   icon={<CheckCircle className="w-4 h-4"/>}/>
+        <Stat label="Failed"     value={loading?'—':failed}           color="var(--red)"     icon={<XCircle className="w-4 h-4"/>}/>
       </div>
-
-      <div className="grid grid-cols-2 gap-6">
-        {/* Projects */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center justify-between">
-              Recent Projects
-              <Link href="/dashboard/projects" className="text-xs text-white/40 hover:text-white font-normal">
-                View all →
-              </Link>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {loading ? (
-              <div className="text-white/30 text-sm">Loading...</div>
-            ) : projects.length === 0 ? (
-              <div className="text-center py-6">
-                <p className="text-white/30 text-sm mb-3">No projects yet</p>
-                <Link href="/dashboard/projects">
-                  <Button size="sm" variant="outline">Create your first project</Button>
-                </Link>
-              </div>
-            ) : (
-              projects.slice(0, 5).map((p) => {
-                const latestDeploy = p.deployments?.[0]
-                return (
-                  <Link href={`/dashboard/projects/${p.id}`} key={p.id}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
-                      <div>
-                        <div className="font-medium text-sm">{p.name}</div>
-                        <div className="text-xs text-white/40">
-                          {FRAMEWORK_LABELS[p.framework || ''] || 'Unknown'} · {formatDate(p.updatedAt)}
-                        </div>
-                      </div>
-                      {latestDeploy && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[latestDeploy.status]}`}>
-                          {latestDeploy.status}
-                        </span>
-                      )}
-                    </div>
-                  </Link>
-                )
-              })
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Deployments */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center justify-between">
-              Recent Deployments
-              <Link href="/dashboard/deployments" className="text-xs text-white/40 hover:text-white font-normal">
-                View all →
-              </Link>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {loading ? (
-              <div className="text-white/30 text-sm">Loading...</div>
-            ) : recentDeployments.length === 0 ? (
-              <div className="text-center py-6">
-                <p className="text-white/30 text-sm">No deployments yet</p>
-              </div>
-            ) : (
-              recentDeployments.map((d) => (
-                <Link href={`/dashboard/deployments/${d.id}`} key={d.id}>
-                  <div className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
-                    <div className="flex items-center gap-3">
-                      <div>
-                        <div className="font-medium text-sm">{d.project?.name}</div>
-                        <div className="text-xs text-white/40">{formatDate(d.createdAt)}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[d.status]}`}>
-                        {d.status}
-                      </span>
-                      {d.previewUrl && (
-                        <a href={d.previewUrl} target="_blank" rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-white/30 hover:text-white">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      )}
+      <div className="grid grid-cols-5 gap-6">
+        <div className="col-span-2 rounded-xl border" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+          <div className="flex items-center justify-between px-5 py-4 border-b" style={{borderColor:'var(--border)'}}>
+            <span className="font-semibold text-sm">Recent Projects</span>
+            <Link href="/dashboard/projects" className="text-xs" style={{color:'var(--accent)'}}>View all →</Link>
+          </div>
+          <div className="divide-y" style={{borderColor:'var(--border)'}}>
+            {loading ? <div className="p-5 text-sm" style={{color:'var(--text3)'}}>Loading...</div>
+            : projects.length === 0 ? <div className="p-8 text-center text-sm" style={{color:'var(--text3)'}}>No projects yet</div>
+            : projects.slice(0,6).map(p => (
+              <Link href={`/dashboard/projects/${p.id}`} key={p.id}>
+                <div className="flex items-center justify-between px-5 py-3.5 hover:bg-white/3 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">{FRAMEWORK_ICONS[p.framework]||'📦'}</span>
+                    <div>
+                      <div className="font-medium text-sm">{p.name}</div>
+                      {p.projectSubDir && <div className="text-xs font-mono" style={{color:'var(--yellow)'}}>📂 {p.projectSubDir}</div>}
                     </div>
                   </div>
-                </Link>
-              ))
-            )}
-          </CardContent>
-        </Card>
+                  {p.deployments?.[0] && <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.deployments[0].status]}`}>{p.deployments[0].status}</span>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div className="col-span-3 rounded-xl border" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+          <div className="flex items-center justify-between px-5 py-4 border-b" style={{borderColor:'var(--border)'}}>
+            <span className="font-semibold text-sm">Recent Deployments</span>
+            <Link href="/dashboard/deployments" className="text-xs" style={{color:'var(--accent)'}}>View all →</Link>
+          </div>
+          <div className="divide-y" style={{borderColor:'var(--border)'}}>
+            {loading ? <div className="p-5 text-sm" style={{color:'var(--text3)'}}>Loading...</div>
+            : deployments.length === 0 ? <div className="p-8 text-center text-sm" style={{color:'var(--text3)'}}>No deployments yet</div>
+            : deployments.map(d => (
+              <Link href={`/dashboard/deployments/${d.id}`} key={d.id}>
+                <div className="flex items-center justify-between px-5 py-3.5 hover:bg-white/3 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${d.status==='SUCCESS'?'bg-green-400':d.status==='FAILED'?'bg-red-400':d.status==='BUILDING'?'bg-blue-400 pulse-dot':'bg-yellow-400'}`}/>
+                    <div>
+                      <div className="font-medium text-sm">{d.project?.name}</div>
+                      <div className="text-xs mt-0.5" style={{color:'var(--text3)'}}>{d.commitMsg?d.commitMsg.slice(0,40):(d.source==='ZIP'?'📦 ZIP':'🔗 GitHub')}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {d.detectionMethod && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium hidden lg:inline ${DETECTION_METHOD_COLORS[d.detectionMethod]||''}`}>{DETECTION_METHOD_LABELS[d.detectionMethod]||d.detectionMethod}</span>}
+                    <span className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1 ${d.isBackend?'text-orange-400 bg-orange-400/10':'text-cyan-400 bg-cyan-400/10'}`}>
+                      {d.isBackend?<><Server className="w-3 h-3"/>EC2</>:<><HardDrive className="w-3 h-3"/>S3</>}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[d.status]}`}>{d.status}</span>
+                    {d.previewUrl&&d.status==='SUCCESS'&&<a href={d.previewUrl} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{color:'var(--text3)'}}><ExternalLink className="w-3.5 h-3.5"/></a>}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )

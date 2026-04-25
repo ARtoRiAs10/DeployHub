@@ -1,0 +1,71 @@
+# =============================================================================
+# DeployHub — .gitignore
+# NEVER commit secrets, credentials, or local config to git.
+# =============================================================================
+
+# ── Environment / Secret files ────────────────────────────────────────────────
+# These files contain real credentials. They must NEVER be committed.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.local.example
+
+# Specific patterns in case someone names them differently
+*.env
+backend/.env
+frontend/.env.local
+frontend/.env
+
+# AWS credentials (belt-and-suspenders)
+.aws/
+aws-credentials*
+credentials.json
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Next.js (frontend) ───────────────────────────────────────────────────────
+frontend/.next/
+frontend/out/
+frontend/.vercel
+
+# ── Build output ──────────────────────────────────────────────────────────────
+dist/
+build/
+*.tgz
+
+# ── Test / Coverage ───────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+junit.xml
+test-results/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Don't commit build context artifacts
+deployhub-builds/
+/tmp/deployhub-*
+
+# ── Uploads ───────────────────────────────────────────────────────────────────
+uploads/
+*.zip.tmp
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Prisma ────────────────────────────────────────────────────────────────────
+# Generated client is rebuilt on install
+backend/node_modules/.prisma/

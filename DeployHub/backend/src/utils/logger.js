@@ -1,16 +1,14 @@
 const winston = require('winston');
-
 const logger = winston.createLogger({
-  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.colorize(),
-    winston.format.printf(({ timestamp, level, message, ...meta }) => {
-      const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : '';
-      return `[${timestamp}] ${level}: ${message} ${metaStr}`;
+    winston.format.printf(({ timestamp, level, message, ...rest }) => {
+      const extra = Object.keys(rest).length ? ' ' + JSON.stringify(rest) : '';
+      return `${timestamp} [${level}]: ${message}${extra}`;
     })
   ),
   transports: [new winston.transports.Console()],
 });
-
 module.exports = { logger };

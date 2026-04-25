@@ -1,64 +1,60 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
 model Project {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  repoUrl     String?
-  framework   String?
-  buildCommand String?
-  outputDir   String?
-  nodeVersion String   @default("20")
-  envVars     Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  deployments Deployment[]
-
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  repoUrl        String?
+  framework      String?
+  buildCommand   String?
+  outputDir      String?
+  nodeVersion    String   @default("20")
+  envVars        Json?
+  isBackend      Boolean?
+  projectSubDir  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deployments    Deployment[]
   @@unique([userId, name])
 }
-
 model Deployment {
-  id          String           @id @default(cuid())
-  projectId   String
-  userId      String
-  status      DeploymentStatus @default(QUEUED)
-  source      DeploymentSource
-  commitHash  String?
-  commitMsg   String?
-  branch      String?
-  buildLog    String?
-  previewUrl  String?
-  s3Key       String?
-  framework   String?
-  buildCommand String?
-  outputDir   String?
-  errorMsg    String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  finishedAt  DateTime?
-
-  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id              String           @id @default(cuid())
+  projectId       String
+  userId          String
+  status          DeploymentStatus @default(QUEUED)
+  source          DeploymentSource
+  commitHash      String?
+  commitMsg       String?
+  branch          String?
+  buildLog        String?
+  previewUrl      String?
+  s3Key           String?
+  ecrImageUri     String?
+  framework       String?
+  buildCommand    String?
+  outputDir       String?
+  errorMsg        String?
+  isBackend       Boolean          @default(false)
+  detectionMethod String?
+  projectSubDir   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  finishedAt      DateTime?
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
-
-enum DeploymentStatus {
-  QUEUED
-  BUILDING
-  SUCCESS
-  FAILED
-  CANCELLED
-}
-
-enum DeploymentSource {
-  GITHUB
-  ZIP
-}
+enum DeploymentStatus { 
+  QUEUED 
+  BUILDING 
+  SUCCESS 
+  FAILED 
+  CANCELLED 
+  }
+enum DeploymentSource  { 
+  GITHUB 
+  ZIP 
+  }

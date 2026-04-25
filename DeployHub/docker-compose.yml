@@ -1,23 +1,110 @@
+# =============================================================================
+# DeployHub — Docker Compose
+# =============================================================================
+# QUICK START (local dev):
+#   1. cp backend/.env.example backend/.env  && fill in values
+#   2. cp frontend/.env.local.example frontend/.env.local && fill in values
+#   3. docker-compose up -d postgres redis
+#   4. cd backend && npm run migrate && npm run dev
+#   5. cd frontend && npm run dev
+#
+# FULL STACK (production-like):
+#   docker-compose --profile full up -d
+# =============================================================================
+
 version: '3.8'
 
 services:
+
+  # ── Infrastructure ─────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
+    env_file: ./backend/.env          # reads POSTGRES_* from .env
     environment:
-      POSTGRES_USER: deployhub
-      POSTGRES_PASSWORD: deployhub123
-      POSTGRES_DB: deployhub
+      # These map from your .env DATABASE_URL components.
+      # Override here or set POSTGRES_* vars directly in backend/.env
+      POSTGRES_USER:     ${POSTGRES_USER:-deployhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deployhub123}
+      POSTGRES_DB:       ${POSTGRES_DB:-deployhub}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deployhub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Application (profile: full) ────────────────────────────────────────────
+  # Only started when running: docker-compose --profile full up
+  # For development, run backend and frontend directly with npm run dev.
+
+  backend:
+    profiles: [full]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deployhub}:${POSTGRES_PASSWORD:-deployhub123}@postgres:5432/${POSTGRES_DB:-deployhub}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # Docker-in-Docker for builds
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    profiles: [full]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    env_file: ./frontend/.env.local
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://nginx/api   # In full-stack mode, nginx proxies to backend
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - "3000:3000"
+
+  nginx:
+    profiles: [full]
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
 
 volumes:
   postgres_data:

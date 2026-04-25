@@ -36,7 +36,7 @@ Nginx Proxy (serves deployments)
 
 - Node.js 18+
 - Docker Desktop
-- Redis (local or cloud)
+- Redis (local or cloud) 'sudo service redis-server start'
 - PostgreSQL (local or cloud)
 - AWS S3 bucket
 - Clerk account

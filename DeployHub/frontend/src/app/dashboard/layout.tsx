@@ -1,50 +1,67 @@
+'use client'
 import { UserButton } from '@clerk/nextjs'
 import Link from 'next/link'
-import { Zap, LayoutDashboard, FolderGit2, Rocket } from 'lucide-react'
+import { usePathname } from 'next/navigation'
+import { Zap, LayoutDashboard, FolderGit2, Rocket, Settings, Activity } from 'lucide-react'
+import BackendStatus from '@/components/BackendStatus'
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+const NAV = [
+  { href:'/dashboard',             label:'Overview',    Icon:LayoutDashboard },
+  { href:'/dashboard/projects',    label:'Projects',    Icon:FolderGit2 },
+  { href:'/dashboard/deployments', label:'Deployments', Icon:Rocket },
+  { href:'/dashboard/activity',    label:'Activity',    Icon:Activity },
+  { href:'/dashboard/settings',    label:'Settings',    Icon:Settings },
+]
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+
   return (
-    <div className="min-h-screen bg-black text-white flex">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-white/10 flex flex-col p-4 shrink-0">
-        <Link href="/dashboard" className="flex items-center gap-2 mb-8 px-2">
-          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
-            <Zap className="w-5 h-5 text-black" />
+    <div className="min-h-screen text-white flex" style={{background:'var(--bg)'}}>
+      <aside className="w-60 shrink-0 flex flex-col border-r" style={{borderColor:'var(--border)',background:'var(--surface)'}}>
+
+        {/* Logo */}
+        <Link href="/dashboard" className="flex items-center gap-2.5 px-5 h-16 border-b shrink-0" style={{borderColor:'var(--border)'}}>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{background:'var(--accent)'}}>
+            <Zap className="w-4 h-4 text-white"/>
           </div>
-          <span className="text-xl font-bold">DeployHub</span>
+          <span className="font-bold text-base tracking-tight">DeployHub</span>
         </Link>
 
-        <nav className="flex-1 space-y-1">
-          {[
-            { href: '/dashboard', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
-            { href: '/dashboard/projects', label: 'Projects', icon: <FolderGit2 className="w-4 h-4" /> },
-            { href: '/dashboard/deployments', label: 'Deployments', icon: <Rocket className="w-4 h-4" /> },
-          ].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/60 hover:text-white hover:bg-white/5 transition-colors"
-            >
-              {item.icon}
-              {item.label}
-            </Link>
-          ))}
+        {/* Nav links */}
+        <nav className="flex-1 px-3 py-4 space-y-0.5">
+          {NAV.map(({ href, label, Icon }) => {
+            const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
+            return (
+              <Link
+                key={href} href={href}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+                style={{
+                  color: active ? 'var(--text)' : 'var(--text2)',
+                  background: active ? 'var(--surface2)' : 'transparent',
+                  fontWeight: active ? 500 : 400,
+                }}
+              >
+                <Icon className="w-4 h-4 shrink-0"/>
+                {label}
+                {active && <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{background:'var(--accent)'}}/>}
+              </Link>
+            )
+          })}
         </nav>
 
-        <div className="border-t border-white/10 pt-4 flex items-center gap-3 px-2">
-          <UserButton afterSignOutUrl="/" />
-          <span className="text-sm text-white/60">Account</span>
+        {/* Account */}
+        <div className="px-5 py-4 border-t flex items-center gap-3" style={{borderColor:'var(--border)'}}>
+          <UserButton afterSignOutUrl="/"/>
+          <span className="text-sm" style={{color:'var(--text2)'}}>Account</span>
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        {children}
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Backend connection status banner — shows in sidebar area above main content */}
+        <BackendStatus />
+        <main className="flex-1 overflow-auto grid-bg">{children}</main>
+      </div>
     </div>
   )
 }

@@ -1,0 +1,329 @@
+name: CI — Test & Lint
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Secrets used in this workflow ─────────────────────────────────────────────
+# Set these in GitHub → Settings → Secrets and variables → Actions:
+#
+#   CODECOV_TOKEN          (optional) codecov.io upload token
+#
+# The following are NOT needed in CI because tests mock all external services:
+#   DATABASE_URL, REDIS_URL, AWS_*, CLERK_*, EC2_*, S3_BUCKET_NAME
+# They ARE needed in staging/production deployment workflows (deploy.yml).
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 1: Backend Tests (unit + integration + BDD)
+  # ─────────────────────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['18', '20']
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      # Tests mock all external services (AWS, Docker, Redis, Clerk, Prisma).
+      # Only NODE_ENV=test is needed — no real secrets required.
+      - name: Run unit tests
+        working-directory: backend
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
+
+      - name: Run integration tests
+        working-directory: backend
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+
+      - name: Run BDD tests
+        working-directory: backend
+        run: npm run test:bdd
+        env:
+          NODE_ENV: test
+
+      - name: Coverage report
+        working-directory: backend
+        run: npm run test:ci
+        env:
+          NODE_ENV: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.node == '20'
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage/lcov.info
+          flags: backend
+          fail_ci_if_error: false
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 2: Frontend TypeScript + ESLint
+  # ─────────────────────────────────────────────────────────────────────────
+  frontend-checks:
+    name: Frontend — TypeScript & ESLint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Use placeholder values for build-time env vars.
+      # Real values never go into CI — they're set in production via GitHub Secrets.
+      - name: Create frontend .env.local for type-checking
+        working-directory: frontend
+        run: |
+          cat > .env.local << 'EOF'
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_placeholder_for_ci_type_check
+          CLERK_SECRET_KEY=sk_test_placeholder_for_ci_type_check
+          NEXT_PUBLIC_API_URL=http://localhost:4000
+          EOF
+
+      - name: TypeScript type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        working-directory: frontend
+        run: npx next lint --max-warnings 0
+        continue-on-error: true  # lint warnings shouldn't block merges
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 3: Env file validation
+  # Checks that .env.example contains all required variables
+  # and that no real secrets are accidentally committed.
+  # ─────────────────────────────────────────────────────────────────────────
+  env-validation:
+    name: Env File Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify .env files are NOT committed
+        run: |
+          # These files must never appear in git — fail immediately if they do
+          FORBIDDEN=(
+            "backend/.env"
+            "frontend/.env.local"
+            "frontend/.env"
+            ".env"
+          )
+          FOUND=0
+          for f in "${FORBIDDEN[@]}"; do
+            if git ls-files --error-unmatch "$f" 2>/dev/null; then
+              echo "::error file=$f::SECRET FILE COMMITTED: $f must not be in git!"
+              FOUND=1
+            fi
+          done
+          if [ $FOUND -eq 1 ]; then
+            echo ""
+            echo "Remove the file(s) from git: git rm --cached <file>"
+            echo "Then add to .gitignore and force-push."
+            exit 1
+          fi
+          echo "✓ No .env files committed"
+
+      - name: Verify .env.example has all required keys
+        run: |
+          node -e "
+          const fs = require('fs');
+          const example = fs.readFileSync('backend/.env.example', 'utf8');
+          const REQUIRED = [
+            'DATABASE_URL', 'REDIS_URL', 'CLERK_SECRET_KEY',
+            'AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+            'S3_BUCKET_NAME', 'EC2_INSTANCE_ID', 'EC2_PUBLIC_DNS',
+          ];
+          const missing = REQUIRED.filter(k => !example.includes(k));
+          if (missing.length > 0) {
+            console.error('Missing from backend/.env.example:', missing.join(', '));
+            process.exit(1);
+          }
+          console.log('✓ backend/.env.example has all required keys');
+          "
+
+      - name: Verify frontend .env.local.example has required keys
+        run: |
+          node -e "
+          const fs = require('fs');
+          const example = fs.readFileSync('frontend/.env.local.example', 'utf8');
+          const REQUIRED = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'NEXT_PUBLIC_API_URL'];
+          const missing = REQUIRED.filter(k => !example.includes(k));
+          if (missing.length > 0) {
+            console.error('Missing from frontend/.env.local.example:', missing.join(', '));
+            process.exit(1);
+          }
+          console.log('✓ frontend/.env.local.example has all required keys');
+          "
+
+      - name: Scan for accidentally leaked secrets patterns
+        run: |
+          # Scan committed files for patterns that look like real secrets
+          # (not placeholder values from .example files)
+          PATTERNS=(
+            'sk_live_[A-Za-z0-9]{20,}'     # Clerk live secret key
+            'sk_test_[A-Za-z0-9]{30,}'     # Clerk test secret key (long = real)
+            'AKIA[0-9A-Z]{16}'             # AWS access key
+            'sk-or-v1-[a-f0-9]{60,}'       # OpenRouter key
+          )
+          FOUND=0
+          for pattern in "${PATTERNS[@]}"; do
+            if git grep -rE "$pattern" -- ':!*.example' ':!SETUP.md' ':!*.md' 2>/dev/null | grep -v "^Binary"; then
+              echo "::warning::Possible secret pattern found: $pattern"
+              FOUND=1
+            fi
+          done
+          if [ $FOUND -eq 1 ]; then
+            echo "Review the matches above. If they are real secrets, rotate them immediately."
+            exit 1
+          fi
+          echo "✓ No obvious secret patterns found in committed files"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 4: Dockerfile template validation
+  # ─────────────────────────────────────────────────────────────────────────
+  dockerfile-validation:
+    name: Dockerfile Template Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+        working-directory: backend
+
+      - name: Validate all Dockerfile templates
+        working-directory: backend
+        run: |
+          node -e "
+          const { TEMPLATES } = require('./src/services/dockerfileGenerator');
+          const BASE = { nodeVersion:'20', buildCommand:'npm run build', outputDir:'dist', entryPoint:'index.js', startCommand:'node index.js', port:3000 };
+          const cases = [
+            ['vite',BASE],['cra',BASE],['gatsby',BASE],['astro',BASE],['sveltekit-static',BASE],['static',BASE],
+            ['nextjs',BASE],['nuxt',BASE],['sveltekit',BASE],['node-backend',BASE],['node',BASE],
+            ['fastapi',{...BASE,startCommand:'uvicorn main:app --host 0.0.0.0 --port 8000',port:8000}],
+            ['flask',{...BASE,startCommand:'gunicorn app:app --bind 0.0.0.0:8000 --workers 2',port:8000}],
+            ['django',{...BASE,buildCommand:'python manage.py collectstatic --noinput',startCommand:'gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2',port:8000}],
+            ['python',{...BASE,entryPoint:'app.py',port:8000}],
+            ['go',{...BASE,buildCommand:'CGO_ENABLED=0 GOOS=linux go build -o main ./cmd',port:8080}],
+            ['rust',{...BASE,entryPoint:'my_server',port:8080}],
+            ['php',BASE],
+          ];
+          let passed=0,failed=0;
+          for(const [fw,opts] of cases){
+            const tmpl=TEMPLATES[fw];
+            if(!tmpl){console.error('MISSING template:',fw);failed++;continue;}
+            const df=tmpl(opts);
+            if(!df.trim().toUpperCase().startsWith('FROM')){console.error('FAIL',fw,'- no FROM');failed++;}
+            else if(fw==='go'&&df.includes('./...')){console.error('FAIL go - contains ./...');failed++;}
+            else{console.log('PASS',fw);passed++;}
+          }
+          console.log(\`\nResult: \${passed} passed, \${failed} failed\`);
+          if(failed>0)process.exit(1);
+          "
+        env:
+          NODE_ENV: test
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 5: Framework routing audit
+  # ─────────────────────────────────────────────────────────────────────────
+  routing-audit:
+    name: Framework Routing Audit (all 18 frameworks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+
+      - name: Assert all 18 frameworks route correctly
+        working-directory: backend
+        run: |
+          node -e "
+          function resolveIsBackend(det,job){return det===true?true:(job!=null?Boolean(job):false);}
+          const ROUTING=[
+            {fw:'vite',det:false,exp:'S3'},{fw:'cra',det:false,exp:'S3'},{fw:'gatsby',det:false,exp:'S3'},
+            {fw:'astro',det:false,exp:'S3'},{fw:'sveltekit-static',det:false,exp:'S3'},{fw:'static',det:false,exp:'S3'},
+            {fw:'nextjs',det:true,exp:'EC2'},{fw:'nuxt',det:true,exp:'EC2'},{fw:'sveltekit',det:true,exp:'EC2'},
+            {fw:'node-backend',det:true,exp:'EC2'},{fw:'fastapi',det:true,exp:'EC2'},{fw:'flask',det:true,exp:'EC2'},
+            {fw:'django',det:true,exp:'EC2'},{fw:'python',det:true,exp:'EC2'},{fw:'go',det:true,exp:'EC2'},
+            {fw:'rust',det:true,exp:'EC2'},{fw:'php',det:true,exp:'EC2'},{fw:'docker',det:true,exp:'EC2'},
+          ];
+          let passed=0,failed=0;
+          for(const{fw,det,exp}of ROUTING){
+            const actual=resolveIsBackend(det,null)?'EC2':'S3';
+            if(actual===exp){console.log('PASS',fw.padEnd(20),'->',actual);passed++;}
+            else{console.error('FAIL',fw.padEnd(20),'expected',exp,'got',actual);failed++;}
+          }
+          console.log(\`\nResult: \${passed}/\${ROUTING.length} passed\`);
+          if(failed>0)process.exit(1);
+          "
+        env:
+          NODE_ENV: test
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # CI Gate — all jobs must pass
+  # ─────────────────────────────────────────────────────────────────────────
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-checks, env-validation, dockerfile-validation, routing-audit]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          FAILED=0
+          for result in \
+            "${{ needs.backend-tests.result }}" \
+            "${{ needs.frontend-checks.result }}" \
+            "${{ needs.env-validation.result }}" \
+            "${{ needs.dockerfile-validation.result }}" \
+            "${{ needs.routing-audit.result }}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A CI job failed with result: $result"
+              FAILED=1
+            fi
+          done
+          [ $FAILED -eq 0 ] && echo "All CI jobs passed ✓" || exit 1

@@ -1,75 +1,78 @@
+'use strict';
+
+// ── 1. Load .env file FIRST (before anything else reads process.env) ─────────
 require('dotenv').config();
+
+// ── 2. Validate all environment variables — exits with clear error if missing ─
+const env = require('./utils/env');
+
+// ── 3. Now safe to load app modules ──────────────────────────────────────────
 require('express-async-errors');
-
 const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const { logger } = require('./utils/logger');
-
-// Route Imports
-const projectRoutes = require('./controllers/projectController');
-const deploymentRoutes = require('./controllers/deploymentController');
-
-// Middleware Imports
+const cors    = require('cors');
+const morgan  = require('morgan');
+const { logger }       = require('./utils/logger');
 const { errorHandler } = require('./middleware/errorHandler');
-const { requireAuth } = require('./middleware/auth');
-
-// Start the queue worker (for processing deployments)
+const { requireAuth }  = require('./middleware/auth');
+const projectRoutes    = require('./controllers/projectController');
+const deploymentRoutes = require('./controllers/deploymentController');
 require('./workers/deploymentWorker');
 
 const app = express();
-const PORT = process.env.PORT || 4000;
 
-/**
- * 1. Trust Proxy
- * Essential for GitHub Codespaces to correctly handle 
- * header forwarding from the Codespace proxy.
- */
 app.set('trust proxy', true);
 
-/**
- * 2. Standard Middleware
- */
+// ── CORS — allow only the configured frontend origin ─────────────────────────
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: env.FRONTEND_URL,
   credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
 }));
 
-// Log requests to the terminal
-app.use(morgan('dev'));
+app.use(morgan(env.IS_PROD ? 'combined' : 'dev'));
+app.use(express.json({ limit: '10mb' }));
 
-// Parse incoming JSON payloads
-app.use(express.json());
-
-/**
- * 3. Health Check
- * Simple endpoint to verify the server is running.
- */
+// ── Health check — public, no auth ───────────────────────────────────────────
+// Used by: frontend startup check, Docker health checks, load balancers, CI
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    version: process.env.npm_package_version || '1.0.0',
+    env: env.NODE_ENV,
   });
 });
 
-/**
- * 4. Protected Routes
- * requireAuth will now manually verify the Clerk JWT.
- */
-app.use('/api/projects', requireAuth, projectRoutes);
+// ── Connection status — public, exposes feature flags to the frontend ─────────
+// Frontend pings this on load to know what features are available.
+app.get('/api/status', (req, res) => {
+  res.json({
+    ok: true,
+    features: {
+      aiDetection:  !!env.OPENROUTER_API_KEY,
+      ec2Deploys:   !!(env.EC2_INSTANCE_ID && env.EC2_PUBLIC_DNS),
+      s3Deploys:    !!env.S3_BUCKET_NAME,
+      customDomain: !!env.DEPLOYMENT_BASE_URL,
+    },
+    region: env.AWS_REGION,
+  });
+});
+
+// ── API routes — protected by Clerk auth ─────────────────────────────────────
+app.use('/api/projects',    requireAuth, projectRoutes);
 app.use('/api/deployments', requireAuth, deploymentRoutes);
 
-/**
- * 5. Error Handling
- * Global error handler must be defined last.
- */
+// ── Global error handler ─────────────────────────────────────────────────────
 app.use(errorHandler);
 
-/**
- * 6. Server Activation
- */
-app.listen(PORT, () => {
-  logger.info(`🚀 DeployHub backend running on port ${PORT}`);
-  logger.info(`🔗 API Base: http://localhost:${PORT}/api`);
+// ── Start ─────────────────────────────────────────────────────────────────────
+app.listen(env.PORT, () => {
+  logger.info(`DeployHub backend running on port ${env.PORT} [${env.NODE_ENV}]`);
+  logger.info(`CORS origin: ${env.FRONTEND_URL}`);
+  logger.info(`AI detection: ${env.OPENROUTER_API_KEY ? 'enabled' : 'disabled (no OPENROUTER_API_KEY)'}`);
+  logger.info(`EC2 target:   ${env.EC2_INSTANCE_ID || 'not configured'}`);
+  logger.info(`S3 bucket:    ${env.S3_BUCKET_NAME  || 'not configured'}`);
 });
+
+module.exports = app;

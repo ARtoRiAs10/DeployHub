@@ -1,243 +1,243 @@
-# DeployHub — Complete Setup Guide
+# DeployHub — Setup Guide
 
-## Prerequisites
+## Environment Variables & Secrets
 
-Install these before starting:
+DeployHub uses two `.env` files — **never commit them to git**.
 
-1. **Node.js 18+** — https://nodejs.org
-2. **Docker Desktop** — https://docker.com/products/docker-desktop (must be running)
-3. **Redis** — Install via Docker or locally
-4. **PostgreSQL** — Install via Docker or locally
-5. **AWS Account** with S3 bucket
-6. **Clerk account** — https://clerk.com (free)
-
----
-
-## Step 1: Start Local Services (Database + Redis)
-
-```bash
-# From the project root
-docker-compose up -d
+```
+backend/.env          ← backend secrets (DB, Redis, AWS, Clerk)
+frontend/.env.local   ← frontend secrets (Clerk publishable key, API URL)
 ```
 
-This starts PostgreSQL on port 5432 and Redis on port 6379.
+The `.gitignore` at the project root blocks all `*.env` files from ever being committed.
 
 ---
 
-## Step 2: Setup Backend
+## Quick Start (Local Development)
 
-### 2a. Install dependencies
+### 1. Copy env templates
+
+```bash
+cp backend/.env.example  backend/.env
+cp frontend/.env.local.example  frontend/.env.local
+```
+
+### 2. Fill in required values
+
+Open `backend/.env` and set:
+
+| Variable | Where to get it |
+|---|---|
+| `DATABASE_URL` | Auto-set if using Docker Compose below |
+| `REDIS_URL` | Auto-set if using Docker Compose below |
+| `CLERK_SECRET_KEY` | [dashboard.clerk.com](https://dashboard.clerk.com) → API Keys |
+| `AWS_REGION` | Your AWS region, e.g. `us-east-1` |
+| `AWS_ACCESS_KEY_ID` | [IAM Console](https://console.aws.amazon.com/iam/) → Users → Security credentials |
+| `AWS_SECRET_ACCESS_KEY` | Same as above |
+| `S3_BUCKET_NAME` | Your S3 bucket with static website hosting enabled |
+| `EC2_INSTANCE_ID` | Your EC2 instance ID, e.g. `i-0abc123` |
+| `EC2_PUBLIC_DNS` | Your EC2 public DNS, e.g. `ec2-xx.compute-1.amazonaws.com` |
+
+Open `frontend/.env.local` and set:
+
+| Variable | Where to get it |
+|---|---|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | [dashboard.clerk.com](https://dashboard.clerk.com) → API Keys |
+| `CLERK_SECRET_KEY` | Same Clerk secret key as backend |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:4000` for local dev |
+
+### 3. Start infrastructure
+
+```bash
+# Start PostgreSQL and Redis (Docker required)
+docker-compose up -d postgres redis
+
+# Wait for them to be healthy
+docker-compose ps
+```
+
+### 4. Run database migrations
 
 ```bash
 cd backend
 npm install
+npx prisma migrate deploy
+npx prisma generate
 ```
 
-### 2b. Configure environment
+### 5. Start the backend
 
 ```bash
-cp .env.example .env
+# Still in backend/
+npm run dev
+# → Server starts on http://localhost:4000
+# → If any required .env var is missing, the server exits immediately
+#   with a clear error message telling you exactly which variable to set.
 ```
 
-Edit `.env` and fill in:
+### 6. Start the frontend
 
-```env
-# Clerk — get from https://dashboard.clerk.com → API Keys
-CLERK_SECRET_KEY=sk_test_...
-
-# AWS S3
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-S3_BUCKET_NAME=your-bucket-name
-
-# URL prefix for served deployments
-DEPLOYMENT_BASE_URL=https://your-bucket.s3-website.us-east-1.amazonaws.com
+```bash
+cd frontend
+npm install
+npm run dev
+# → App starts on http://localhost:3000
+# → The sidebar will show a green "Backend connected" indicator
+# → If the backend is unreachable, it shows a red banner with setup instructions
 ```
 
-### 2c. Create S3 Bucket (AWS Console)
+---
 
-1. Go to AWS S3 → Create Bucket
-2. Uncheck "Block all public access"
-3. Enable static website hosting
-4. Add bucket policy for public read:
+## Environment Variable Reference
+
+### Backend (`backend/.env`)
+
+#### Required — app will not start without these
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection string (used by Bull job queue) |
+| `CLERK_SECRET_KEY` | Clerk secret key for JWT verification |
+| `AWS_REGION` | AWS region for S3 + ECR + SSM |
+| `AWS_ACCESS_KEY_ID` | IAM access key |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret key |
+| `S3_BUCKET_NAME` | S3 bucket for static deployments |
+| `EC2_INSTANCE_ID` | EC2 instance for backend deployments |
+| `EC2_PUBLIC_DNS` | EC2 public DNS for backend URLs |
+
+#### Optional — have sensible defaults
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `4000` | Express server port |
+| `NODE_ENV` | `development` | `development` or `production` |
+| `FRONTEND_URL` | `http://localhost:3000` | CORS allowed origin |
+| `DEPLOYMENT_BASE_URL` | S3 website URL | Override with CloudFront/custom domain |
+| `OPENROUTER_API_KEY` | *(none)* | Enable AI framework detection. [Get key](https://openrouter.ai/keys) |
+| `OPENROUTER_MODEL` | `meta-llama/llama-3.3-8b-instruct:free` | OpenRouter model |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `LOG_LEVEL` | `info` | `error` \| `warn` \| `info` \| `debug` |
+| `BUILD_TIMEOUT_MS` | `300000` | Max Docker build time (ms) |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | ✓ | Clerk publishable key (browser-safe) |
+| `CLERK_SECRET_KEY` | ✓ | Clerk secret key (middleware only) |
+| `NEXT_PUBLIC_API_URL` | ✓ | Backend URL. Local: `http://localhost:4000` |
+
+---
+
+## Frontend ↔ Backend Connection
+
+The frontend connects to the backend via the `NEXT_PUBLIC_API_URL` env variable. On every page load the dashboard sidebar pings `/health` and `/api/status` to:
+
+1. **Confirm the backend is reachable** — shows a green dot or a red error banner
+2. **Show which features are configured** — flags missing AWS vars before a deploy fails
+
+### Connection states shown in the UI
+
+| State | What the user sees |
+|---|---|
+| Checking | Nothing (brief, < 5s) |
+| Connected, all features | Green dot · AWS region · dismiss button |
+| Connected, missing features | Green dot + yellow warning badge → click to see which vars to set |
+| Disconnected | Red banner with the exact backend URL and `npm run dev` command |
+
+---
+
+## AWS IAM Permissions
+
+The IAM user needs these policies:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject","s3:GetObject","s3:DeleteObject","s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::YOUR_BUCKET_NAME","arn:aws:s3:::YOUR_BUCKET_NAME/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ecr:*"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ssm:SendCommand","ssm:GetCommandInvocation"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+---
+
+## EC2 Setup Requirements
+
+Your EC2 instance needs:
+- **SSM Agent** installed and running (`sudo systemctl status amazon-ssm-agent`)
+- **IAM role** with `AmazonEC2RoleforSSM` policy attached
+- **Docker** installed (`docker --version`)
+- **Inbound ports** open for your app ports (e.g. 8080, 3000)
+
+---
+
+## S3 Bucket Setup
+
+1. Create a bucket in your chosen region
+2. **Disable** "Block all public access"
+3. Enable **Static website hosting** (Properties tab)
+4. Add this **bucket policy**:
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [{
-    "Sid": "PublicRead",
+    "Sid": "PublicReadGetObject",
     "Effect": "Allow",
     "Principal": "*",
     "Action": "s3:GetObject",
-    "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME/*"
+    "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
   }]
 }
 ```
-
-### 2d. Initialize database
-
-```bash
-cd backend
-npx prisma migrate dev --name init
-npx prisma generate
-```
-
-### 2e. Start backend
-
-```bash
-npm run dev
-```
-
-Backend runs at http://localhost:4000
-
----
-
-## Step 3: Setup Frontend
-
-### 3a. Install dependencies
-
-```bash
-cd frontend
-npm install
-```
-
-### 3b. Configure environment
-
-```bash
-cp .env.local.example .env.local
-```
-
-Edit `.env.local`:
-
-```env
-# Clerk — get from https://dashboard.clerk.com → API Keys
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-CLERK_SECRET_KEY=sk_test_...
-
-# Points to your backend
-NEXT_PUBLIC_API_URL=http://localhost:4000
-```
-
-### 3c. Start frontend
-
-```bash
-npm run dev
-```
-
-Frontend runs at http://localhost:3000
-
----
-
-## Step 4: Configure Clerk
-
-1. Go to https://dashboard.clerk.com
-2. Create a new application
-3. Configure sign-in methods (Email, Google, GitHub — your choice)
-4. Copy the API keys to both `.env` files
-5. In Clerk Dashboard → Redirects, set:
-   - Sign-in redirect: `/dashboard`
-   - Sign-up redirect: `/dashboard`
-
----
-
-## Step 5: Test a Deployment
-
-1. Open http://localhost:3000
-2. Sign up / Sign in
-3. Create a new project:
-   - Name: `my-test-app`
-   - Repo URL: `https://github.com/facebook/create-react-app` (or any public repo)
-4. Click **Deploy**
-5. Watch the build log in real-time
-
----
-
-## Architecture Overview
-
-```
-User Browser
-    │
-    ▼
-Next.js Frontend (port 3000)
-    │  Clerk JWT auth
-    ▼
-Express API (port 4000)
-    │
-    ├─ POST /api/deployments/github ──► Bull Queue (Redis)
-    │                                        │
-    │                                   Worker picks job
-    │                                        │
-    │                                   1. Clone repo (git)
-    │                                   2. Detect framework
-    │                                   3. Generate Dockerfile
-    │                                   4. Docker build
-    │                                   5. Extract output
-    │                                   6. Upload to S3
-    │                                        │
-    ├─ GET /api/deployments/:id ◄────── Update DB (Prisma)
-    │
-PostgreSQL (port 5432)
-    │
-    └── Stores: Projects, Deployments, Logs
-```
-
----
-
-## Framework Auto-Detection Priority
-
-When you deploy a repo **without** a Dockerfile, the worker:
-
-1. Checks `Dockerfile` → use it directly
-2. Checks `package.json` → reads dependencies:
-   - `next` → Next.js template
-   - `vite` → Vite template  
-   - `react-scripts` → CRA template
-   - `gatsby` → Gatsby template
-   - `nuxt` → Nuxt template
-   - `astro` → Astro template
-   - `@sveltejs/kit` → SvelteKit template
-3. Checks `requirements.txt` → Python template
-4. Checks `go.mod` → Go template
-5. Checks `Cargo.toml` → Rust template
-6. Checks `composer.json` → PHP template
-7. Checks `index.html` → Static HTML template
-8. Falls back to generic static template
 
 ---
 
 ## Production Deployment
 
-### Backend
-- Deploy to Railway, Render, or EC2
-- Set `NODE_ENV=production`
-- Use managed Redis (Upstash, Redis Cloud)
-- Use managed PostgreSQL (Supabase, Railway)
+For production, use `docker-compose --profile full up`:
 
-### Frontend
-- Deploy to Vercel (ironic) or Netlify
-- Set all `NEXT_PUBLIC_*` env vars
+```bash
+# Both .env files must be filled in
+cp backend/.env.example backend/.env    && vim backend/.env
+cp frontend/.env.local.example frontend/.env.local && vim frontend/.env.local
 
-### Docker
-- The backend needs access to Docker socket
-- On cloud VMs, Docker must be installed and running
-- On Railway/Render, Docker-in-Docker or Fargate is needed
+# Build and start everything
+docker-compose --profile full up -d
+
+# Check all services are healthy
+docker-compose ps
+```
+
+Nginx proxies:
+- `GET /api/*` → backend:4000
+- Everything else → frontend:3000
 
 ---
 
-## Troubleshooting
+## Secrets Security Checklist
 
-**"Cannot connect to Docker daemon"**
-→ Make sure Docker Desktop is running
-
-**"Redis connection failed"**  
-→ Run `docker-compose up -d` or `redis-server`
-
-**"Prisma migration failed"**
-→ Make sure PostgreSQL is running: `docker-compose up -d`
-
-**"Clerk auth failed"**
-→ Check CLERK_SECRET_KEY is set correctly in backend `.env`
-
-**"S3 upload failed"**
-→ Check AWS credentials and bucket policy (public read required)
+- [ ] `backend/.env` is in `.gitignore` ✓ (already configured)
+- [ ] `frontend/.env.local` is in `.gitignore` ✓ (already configured)  
+- [ ] AWS IAM user has **minimum required permissions** (not AdministratorAccess)
+- [ ] Clerk keys are **rotated** if ever accidentally exposed
+- [ ] EC2 security group only allows inbound traffic on required ports
+- [ ] S3 bucket policy only allows `GetObject` publicly (not `PutObject`)
+- [ ] `docker-compose.yml` does **not** contain real credentials ✓ (uses env files)
+- [ ] CI/CD secrets stored in **GitHub Actions Secrets**, not in workflow YAML
