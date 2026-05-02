@@ -1,7 +1,7 @@
 node_modules/
 .next/
 out/
-.env.local
 .env
+.env.local
 coverage/
 *.log
