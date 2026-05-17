@@ -33,6 +33,10 @@ const OPTIONAL = [
   { key: 'DOCKER_SOCKET',      default: '/var/run/docker.sock', hint: 'Docker socket path' },
   { key: 'LOG_LEVEL',          default: 'info',          hint: 'Winston log level: error | warn | info | debug' },
   { key: 'BUILD_TIMEOUT_MS',   default: '300000',        hint: 'Max Docker build time in ms (default 5 min)' },
+  { key: 'EC2_PORT_RANGE_START', default: '3100',        hint: 'First host port DeployHub may assign to backend containers (default 3100)' },
+  { key: 'EC2_PORT_RANGE_END',   default: '3999',  hint: 'Last host port DeployHub may assign to backend containers (default 3999)' },
+  { key: 'NGINX_CONTAINER_NAME', default: null,    hint: 'nginx Docker container name on EC2 host. Unset = direct EC2:port access (current default).' },
+  { key: 'NGINX_CONF_HOST_DIR',  default: null,    hint: 'Host path bind-mounted into nginx container at /etc/nginx/conf.d/projects. Only needed with NGINX_CONTAINER_NAME.' },
 ];
 
 function validate() {
@@ -144,6 +148,11 @@ function buildEnvObject() {
     DOCKER_SOCKET:      process.env.DOCKER_SOCKET || '/var/run/docker.sock',
     LOG_LEVEL:          process.env.LOG_LEVEL || 'info',
     BUILD_TIMEOUT_MS:   parseInt(process.env.BUILD_TIMEOUT_MS || '300000', 10),
+    EC2_PORT_RANGE_START: parseInt(process.env.EC2_PORT_RANGE_START || '3100', 10),
+    EC2_PORT_RANGE_END:   parseInt(process.env.EC2_PORT_RANGE_END   || '3999', 10),
+    // Nginx container management (optional — unset = direct port access)
+    NGINX_CONTAINER_NAME: process.env.NGINX_CONTAINER_NAME || null,
+    NGINX_CONF_HOST_DIR:  process.env.NGINX_CONF_HOST_DIR  || null,
   };
 }
 

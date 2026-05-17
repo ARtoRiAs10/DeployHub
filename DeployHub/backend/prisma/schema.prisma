@@ -19,9 +19,11 @@ model Project {
   projectSubDir  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  deployments    Deployment[]
+  deployments     Deployment[]
+  portAllocations PortAllocation[]
   @@unique([userId, name])
 }
+
 model Deployment {
   id              String           @id @default(cuid())
   projectId       String
@@ -42,19 +44,35 @@ model Deployment {
   isBackend       Boolean          @default(false)
   detectionMethod String?
   projectSubDir   String?
+  hostPort        Int?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   finishedAt      DateTime?
   project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  portAllocation  PortAllocation?
 }
-enum DeploymentStatus { 
-  QUEUED 
-  BUILDING 
-  SUCCESS 
-  FAILED 
-  CANCELLED 
-  }
-enum DeploymentSource  { 
-  GITHUB 
-  ZIP 
-  }
+
+model PortAllocation {
+  id           String   @id @default(cuid())
+  projectId    String
+  deploymentId String   @unique
+  hostPort     Int      @unique
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  @@index([hostPort])
+  @@index([projectId])
+}
+
+enum DeploymentStatus {
+  QUEUED
+  BUILDING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+enum DeploymentSource {
+  GITHUB
+  ZIP
+}

@@ -16,6 +16,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const { requireAuth }  = require('./middleware/auth');
 const projectRoutes    = require('./controllers/projectController');
 const deploymentRoutes = require('./controllers/deploymentController');
+const nginxRoutes      = require('./controllers/nginxController');
 require('./workers/deploymentWorker');
 
 const app = express();
@@ -62,6 +63,7 @@ app.get('/api/status', (req, res) => {
 // ── API routes — protected by Clerk auth ─────────────────────────────────────
 app.use('/api/projects',    requireAuth, projectRoutes);
 app.use('/api/deployments', requireAuth, deploymentRoutes);
+app.use('/api/nginx',       requireAuth, nginxRoutes);
 
 // ── Global error handler ─────────────────────────────────────────────────────
 app.use(errorHandler);

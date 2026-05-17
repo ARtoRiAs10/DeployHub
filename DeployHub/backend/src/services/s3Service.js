@@ -38,19 +38,25 @@ async function getAllFiles(dir) {
 }
 
 /**
- * Returns the public URL for a deployment.
+ * Returns the public URL for a static frontend deployment.
  *
- * FIX: S3 static-website hosting uses the s3-website endpoint:
- *   http://<bucket>.s3-website.<region>.amazonaws.com
- * The REST endpoint (s3.amazonaws.com) requires signed requests and does NOT
- * serve index.html automatically — it returns XML errors for directory paths.
+ * S3 static-website hosting uses the s3-website endpoint:
+ *   http://<bucket>.s3-website-<region>.amazonaws.com
+ *   (note: some regions use s3-website.<region> without the dash)
+ *
+ * The S3 REST endpoint (s3.amazonaws.com) requires signed requests and does
+ * NOT serve index.html automatically for directory paths — it returns XML
+ * errors. Always use the website endpoint for public static hosting.
  *
  * Set DEPLOYMENT_BASE_URL in .env to override with a CloudFront or custom domain.
  */
 function getDeploymentUrl(deploymentId) {
-  const base = process.env.DEPLOYMENT_BASE_URL
-    || `http://${BUCKET}.s3.${REGION}.amazonaws.com`;
-  return `${base}/deployments/${deploymentId}/index.html`;
+  if (process.env.DEPLOYMENT_BASE_URL) {
+    return `${process.env.DEPLOYMENT_BASE_URL}/deployments/${deploymentId}/index.html`;
+  }
+  // S3 static website endpoint — serves index.html automatically for directory paths
+  const websiteEndpoint = `http://${BUCKET}.s3.${REGION}.amazonaws.com`;
+  return `${websiteEndpoint}/deployments/${deploymentId}/index.html`;
 }
 
 module.exports = { uploadDirectoryToS3, getDeploymentUrl };

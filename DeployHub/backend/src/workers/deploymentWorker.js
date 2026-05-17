@@ -17,7 +17,7 @@ const WORK_DIR = '/tmp/deployhub-builds';
 
 deploymentQueue.process('deploy', 1, async (job) => {
   const {
-    deploymentId, source, repoUrl, zipPath, branch,
+    deploymentId, projectId, source, repoUrl, zipPath, branch,
     framework: forcedFramework, buildCommand: forcedBuild, outputDir: forcedOutputDir,
     nodeVersion, envVars,
     projectSubDir: forcedSubDir,
@@ -34,20 +34,21 @@ deploymentQueue.process('deploy', 1, async (job) => {
   const repoDir = path.join(WORK_DIR, deploymentId);
 
   try {
-    await prisma.deployment.update({ where:{ id: deploymentId }, data:{ status:'BUILDING', buildLog:'' } });
+    await prisma.deployment.update({ where: { id: deploymentId }, data: { status: 'BUILDING', buildLog: '' } });
 
     // ── Step 1: Get source ────────────────────────────────────────────────
     await fs.ensureDir(repoDir);
     log('📦 Preparing source code...');
 
     if (source === 'GITHUB') {
-      log(`🔗 Cloning ${repoUrl} (branch: ${branch||'main'})...`);
-      await simpleGit().clone(repoUrl, repoDir, ['--depth=1', `--branch=${branch||'main'}`]);
-      const gitLog = await simpleGit(repoDir).log({ maxCount:1 });
+      log(`🔗 Cloning ${repoUrl} (branch: ${branch || 'main'})...`);
+      await simpleGit().clone(repoUrl, repoDir, ['--depth=1', `--branch=${branch || 'main'}`]);
+      const gitLog = await simpleGit(repoDir).log({ maxCount: 1 });
       if (gitLog.latest) {
-        await prisma.deployment.update({ where:{ id:deploymentId }, data:{
-          commitHash: gitLog.latest.hash.slice(0,7), commitMsg: gitLog.latest.message,
-        }});
+        await prisma.deployment.update({
+          where: { id: deploymentId },
+          data: { commitHash: gitLog.latest.hash.slice(0, 7), commitMsg: gitLog.latest.message },
+        });
       }
     } else if (source === 'ZIP') {
       log('📂 Extracting ZIP...');
@@ -88,23 +89,13 @@ deploymentQueue.process('deploy', 1, async (job) => {
     const entryPoint   = detected.entryPoint;
     const startCommand = detected.startCommand;
     const port         = detected.port || inferPort(framework);
-    // goMainPkg: resolved by curated.js — the exact sub-package path containing
-    // `package main` (e.g. "cmd"). Passed to dockerfileGenerator so the Go
-    // template builds exactly the right package instead of using ./... or .
     const goMainPkg    = detected.goMainPkg || null;
 
-    // FIX: detected.isBackend=true is always authoritative.
-    // Previously, job.data.isBackend (which defaults to false from the project DB)
-    // silently overrode detected.isBackend=true, causing backend projects (Go, Rust,
-    // Flask, etc.) to be incorrectly routed to S3 instead of EC2.
-    // Rule: if the detector says it's a backend → it's a backend, full stop.
-    // The user-supplied flag only matters when the detector says frontend (false).
     const isBackend = detected.isBackend === true
       ? true
       : (job.data.isBackend != null ? Boolean(job.data.isBackend) : false);
 
     const buildDir = detected.projectRoot || scanDir;
-
     const resolvedSubDir = manualSubDir
       || (buildDir !== repoDir ? path.relative(repoDir, buildDir) : null);
 
@@ -116,6 +107,7 @@ deploymentQueue.process('deploy', 1, async (job) => {
     log(`📋 Build command: ${buildCommand || 'none'}`);
     log(`📁 Output directory: ${outputDir}`);
     log(`🏷️  Deploy target: ${isBackend ? 'EC2 (dynamic)' : 'S3 (static)'}`);
+    if (isBackend) log(`🔌 Container port: ${port}`);
 
     // ── Step 4: Generate Dockerfile ───────────────────────────────────────
     if (!detected.hasDockerfile) {
@@ -138,26 +130,35 @@ deploymentQueue.process('deploy', 1, async (job) => {
     // ── Step 6a: BACKEND → ECR + EC2 ─────────────────────────────────────
     if (isBackend) {
       log('🖥️  Backend — deploying to EC2...');
-      const { backendUrl, ecrImageUri } = await deployBackend({
-        deploymentId, localImageTag: imageTag, port, envVars: envVars||{}, log,
+      const { backendUrl, ecrImageUri, hostPort } = await deployBackend({
+        deploymentId,
+        projectId: projectId || job.data.projectId,
+        localImageTag: imageTag,
+        port,
+        envVars: envVars || {},
+        log,
       });
       await cleanup(null, imageTag);
       await fs.remove(repoDir).catch(() => {});
-      await prisma.deployment.update({ where:{ id:deploymentId }, data:{
-        status:'SUCCESS', previewUrl:backendUrl, s3Key:null, ecrImageUri, buildLog,
-        finishedAt:new Date(), framework, isBackend:true,
-        detectionMethod: detected.detectionMethod, projectSubDir: resolvedSubDir,
-      }});
+      await prisma.deployment.update({
+        where: { id: deploymentId },
+        data: {
+          status: 'SUCCESS', previewUrl: backendUrl, s3Key: null, ecrImageUri, buildLog,
+          finishedAt: new Date(), framework, isBackend: true,
+          detectionMethod: detected.detectionMethod, projectSubDir: resolvedSubDir,
+          hostPort,   // ← persists the allocated EC2 host port for display / auditing
+        },
+      });
       log(`✅ EC2 deployment live: ${backendUrl}`);
-      return { success:true, backendUrl };
+      return { success: true, backendUrl };
     }
 
     // ── Step 6b: FRONTEND → extract + S3 ─────────────────────────────────
     log('🌐 Frontend — extracting static build for S3...');
     const outputPath = path.join(WORK_DIR, `${deploymentId}-output`);
     await fs.ensureDir(outputPath);
-    const envArray   = Object.entries(envVars||{}).map(([k,v]) => `${k}=${v}`);
-    const container  = await docker.createContainer({ Image:imageTag, Cmd:['sh','-c','echo done'], Env:envArray });
+    const envArray  = Object.entries(envVars || {}).map(([k, v]) => `${k}=${v}`);
+    const container = await docker.createContainer({ Image: imageTag, Cmd: ['sh', '-c', 'echo done'], Env: envArray });
     await container.start();
 
     const containerOutputDir = resolveContainerOutputDir(framework, outputDir);
@@ -172,7 +173,7 @@ deploymentQueue.process('deploy', 1, async (job) => {
       });
     } catch (e) {
       log(`⚠️  Could not extract ${containerOutputDir}, falling back to build dir`);
-      await fs.copy(buildDir, outputPath, { overwrite:true });
+      await fs.copy(buildDir, outputPath, { overwrite: true });
     }
 
     await container.wait().catch(() => {});
@@ -190,33 +191,34 @@ deploymentQueue.process('deploy', 1, async (job) => {
     const { prefix } = await uploadDirectoryToS3(uploadDir, deploymentId, log);
     const previewUrl  = getDeploymentUrl(deploymentId);
 
-    await prisma.deployment.update({ where:{ id:deploymentId }, data:{
-      status:'SUCCESS', previewUrl, s3Key:prefix, buildLog, finishedAt:new Date(),
-      framework, isBackend:false,
-      detectionMethod: detected.detectionMethod, projectSubDir: resolvedSubDir,
-    }});
+    await prisma.deployment.update({
+      where: { id: deploymentId },
+      data: {
+        status: 'SUCCESS', previewUrl, s3Key: prefix, buildLog, finishedAt: new Date(),
+        framework, isBackend: false,
+        detectionMethod: detected.detectionMethod, projectSubDir: resolvedSubDir,
+      },
+    });
     await fs.remove(repoDir).catch(() => {});
     await fs.remove(outputPath).catch(() => {});
     log(`✅ S3 deployment live: ${previewUrl}`);
-    return { success:true, previewUrl };
+    return { success: true, previewUrl };
 
   } catch (err) {
     log(`❌ Build failed: ${err.message}`);
     logger.error(`Deployment ${deploymentId} failed:`, err);
-    await prisma.deployment.update({ where:{ id:deploymentId }, data:{
-      status:'FAILED', errorMsg:err.message, buildLog, finishedAt:new Date(),
-    }}).catch(() => {});
+    await prisma.deployment.update({
+      where: { id: deploymentId },
+      data: { status: 'FAILED', errorMsg: err.message, buildLog, finishedAt: new Date() },
+    }).catch(() => {});
     await fs.remove(repoDir).catch(() => {});
     throw err;
   }
 });
 
 function resolveContainerOutputDir(framework, outputDir) {
-  // nginx-based static frameworks: built files are copied to nginx's html dir
-  const nginxBased = new Set(['vite','cra','gatsby','astro','sveltekit-static','static']);
+  const nginxBased = new Set(['vite', 'cra', 'gatsby', 'astro', 'sveltekit-static', 'static']);
   if (nginxBased.has(framework)) return '/usr/share/nginx/html';
-  // nextjs/nuxt are now isBackend=true and go to EC2, so this path is never hit for them.
-  // Kept as a safety fallback: if somehow reached, extract from /app (standalone root).
   if (framework === 'nextjs') return '/app';
   if (framework === 'nuxt')   return '/app';
   return outputDir === '.' ? '/app' : `/app/${outputDir}`;
@@ -224,9 +226,9 @@ function resolveContainerOutputDir(framework, outputDir) {
 
 function inferPort(framework) {
   const ports = {
-    'node-backend':3000, node:3000, nextjs:3000, nuxt:3000, sveltekit:3000,
-    fastapi:8000, flask:8000, django:8000, python:8000,
-    go:8080, rust:8080, php:80, docker:3000,
+    'node-backend': 3000, node: 3000, nextjs: 3000, nuxt: 3000, sveltekit: 3000,
+    fastapi: 8000, flask: 8000, django: 8000, python: 8000,
+    go: 8080, rust: 8080, php: 80, docker: 3000,
   };
   return ports[framework] || 3000;
 }

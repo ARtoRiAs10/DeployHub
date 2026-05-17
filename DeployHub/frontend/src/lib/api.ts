@@ -86,6 +86,33 @@ export const api = {
   deleteProject: (id: string, token: string) =>
     fetchWithAuth(`/api/projects/${id}`, { method: 'DELETE' }, token),
 
+  // ── Environment Variables ──────────────────────────────────────────────────
+  /**
+   * Get env vars for a project.
+   * @param reveal  Pass true to receive actual values (default: redacted as ***)
+   */
+  getProjectEnv: (id: string, token: string, reveal = false) =>
+    fetchWithAuth(`/api/projects/${id}/env${reveal ? '?reveal=1' : ''}`, {}, token),
+
+  /**
+   * Replace all env vars for a project.
+   * @param envVars  Plain key-value object { KEY: "value" }
+   */
+  setProjectEnv: (id: string, envVars: Record<string, string>, token: string) =>
+    fetchWithAuth(`/api/projects/${id}/env`, {
+      method: 'PUT',
+      body: JSON.stringify({ envVars }),
+    }, token),
+
+  /**
+   * Merge changes into existing env vars (add / update / delete individual keys).
+   */
+  patchProjectEnv: (id: string, changes: { set?: Record<string, string>; delete?: string[] }, token: string) =>
+    fetchWithAuth(`/api/projects/${id}/env`, {
+      method: 'PATCH',
+      body: JSON.stringify(changes),
+    }, token),
+
   // ── Deployments ────────────────────────────────────────────────────────────
   getDeployments: (params: { projectId?: string; limit?: number }, token: string) => {
     const qs = new URLSearchParams()
@@ -101,21 +128,11 @@ export const api = {
     fetchWithAuth('/api/deployments/github', { method: 'POST', body: JSON.stringify(data) }, token),
 
   deployFromZip: (formData: FormData, token: string) =>
-    fetch(`${API_URL}/api/deployments/zip`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    }).then(async res => {
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }))
-        throw new Error(err.error)
-      }
-      return res.json()
-    }),
+    fetchWithAuth('/api/deployments/zip', { method: 'POST', body: formData }, token),
+
+  redeploy: (id: string, token: string) =>
+    fetchWithAuth(`/api/deployments/${id}/redeploy`, { method: 'POST' }, token),
 
   cancelDeployment: (id: string, token: string) =>
     fetchWithAuth(`/api/deployments/${id}`, { method: 'DELETE' }, token),
-
-  redeployFromDeployment: (id: string, token: string) =>
-    fetchWithAuth(`/api/deployments/${id}/redeploy`, { method: 'POST' }, token),
 }
