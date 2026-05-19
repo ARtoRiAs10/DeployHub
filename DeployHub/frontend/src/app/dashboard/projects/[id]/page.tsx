@@ -81,8 +81,8 @@ export default function ProjectDetailPage() {
   const inp = 'w-full px-3 py-2 rounded-lg text-sm border outline-none'
   const ist = { background: 'var(--surface2)', borderColor: 'var(--border)', color: 'var(--text)' } as React.CSSProperties
 
-  // Find the latest successful backend deployment
-  const latestSuccess = deployments.find(d => d.status === 'SUCCESS' && d.isBackend)
+  // Find the latest successful deployment (backend or frontend)
+  const latestSuccess = deployments.find(d => d.status === 'SUCCESS')
 
   if (loading) return <div className="p-8 text-sm" style={{ color: 'var(--text3)' }}>Loading...</div>
   if (!project) return <div className="p-8 text-sm" style={{ color: 'var(--red)' }}>Project not found</div>
@@ -138,19 +138,26 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Live URL banner (backend projects) */}
+      {/* Live URL banner — shown for both backend (EC2) and frontend (S3) deployments */}
       {latestSuccess?.previewUrl && (
-        <div className="rounded-xl border px-4 py-3 mb-6 flex items-center justify-between" style={{ background: 'rgba(52,211,153,0.06)', borderColor: 'rgba(52,211,153,0.25)' }}>
+        <div className="rounded-xl border px-4 py-3 mb-6 flex items-center justify-between" style={{ background: latestSuccess.isBackend ? 'rgba(52,211,153,0.06)' : 'rgba(79,142,255,0.06)', borderColor: latestSuccess.isBackend ? 'rgba(52,211,153,0.25)' : 'rgba(79,142,255,0.25)' }}>
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4" style={{ color: '#34d399' }} />
-            <span className="text-sm font-medium" style={{ color: '#34d399' }}>Live backend URL</span>
-            {latestSuccess.hostPort && (
+            <Globe className="w-4 h-4" style={{ color: latestSuccess.isBackend ? '#34d399' : 'var(--accent)' }} />
+            <span className="text-sm font-medium" style={{ color: latestSuccess.isBackend ? '#34d399' : 'var(--accent)' }}>
+              {latestSuccess.isBackend ? 'Live backend URL' : 'Live frontend URL'}
+            </span>
+            {latestSuccess.isBackend && latestSuccess.hostPort && (
               <span className="text-xs px-2 py-0.5 rounded-full font-mono" style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399' }}>
                 port {latestSuccess.hostPort}
               </span>
             )}
+            {!latestSuccess.isBackend && (
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(79,142,255,0.1)', color: 'var(--accent)' }}>
+                S3 static
+              </span>
+            )}
           </div>
-          <a href={latestSuccess.previewUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-sm font-mono" style={{ color: '#34d399' }}>
+          <a href={latestSuccess.previewUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-sm font-mono" style={{ color: latestSuccess.isBackend ? '#34d399' : 'var(--accent)' }}>
             {latestSuccess.previewUrl} <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>

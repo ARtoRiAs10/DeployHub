@@ -22,16 +22,35 @@ export default function DeploymentDetailPage() {
     const t = await getToken(); if (!t) return
     try {
       const d = await api.getDeployment(id, t); setDeployment(d)
+      // Start polling immediately if deployment is active.
+      // Use 1500ms so build log updates appear quickly in the terminal.
       if (['QUEUED','BUILDING'].includes(d.status)) {
-        if (!pollingRef.current) {
-          pollingRef.current = setInterval(async () => {
-            const t2 = await getToken(); if (!t2) return
-            const updated = await api.getDeployment(id, t2); setDeployment(updated)
-            if (!['QUEUED','BUILDING'].includes(updated.status)) { clearInterval(pollingRef.current!); pollingRef.current=null }
-          }, 2500)
-        }
+        startPolling()
+      } else {
+        // Deployment already finished — stop any lingering poll
+        stopPolling()
       }
     } finally { setLoading(false) }
+  }
+
+  function startPolling() {
+    if (pollingRef.current) return  // already polling
+    pollingRef.current = setInterval(async () => {
+      try {
+        const t2 = await getToken(); if (!t2) return
+        const updated = await api.getDeployment(id, t2)
+        setDeployment(updated)
+        if (!['QUEUED','BUILDING'].includes(updated.status)) {
+          stopPolling()
+        }
+      } catch {
+        // network blip — keep polling, don't crash
+      }
+    }, 1500)
+  }
+
+  function stopPolling() {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
   }
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [deployment?.buildLog])
@@ -112,17 +131,23 @@ export default function DeploymentDetailPage() {
               <span className="text-xs font-medium" style={{color:'var(--text3)'}}>build log{isActive&&<span className="ml-2 text-blue-400 animate-pulse"> — streaming...</span>}</span>
             </div>
             <div ref={logRef} className="log-container relative h-[520px] overflow-y-auto p-5 font-mono text-xs leading-6">
-              {deployment.buildLog ? deployment.buildLog.split('\n').map((line:string,i:number)=>{
-                let c = 'rgba(240,242,245,0.4)'
-                if (line.includes('✓')||line.includes('SUCCESS'))         c='#3ddc84'
-                else if (line.includes('❌')||line.includes('failed')||line.includes('Error')) c='#ff6b6b'
-                else if (line.includes('🔍')||line.includes('🐳'))        c='#4f8eff'
-                else if (line.includes('🔨')||line.includes('📦'))        c='#ffc53d'
-                else if (line.startsWith('Step')||line.startsWith('--->')) c='rgba(240,242,245,0.7)'
-                else if (line.startsWith('FROM')||line.startsWith('RUN')||line.startsWith('COPY')) c='#c678dd'
-                return <div key={i} style={{color:c}}>{line||'\u00a0'}</div>
-              }) : isActive ? <div className="animate-pulse" style={{color:'var(--text3)'}}>Waiting for build to start...</div>
-                : <div style={{color:'var(--text3)'}}>No log available</div>}
+              {deployment.buildLog && deployment.buildLog.trim().length > 0
+                ? deployment.buildLog.split('\n').map((line:string,i:number)=>{
+                    let c = 'rgba(240,242,245,0.4)'
+                    if (line.includes('✓')||line.includes('SUCCESS'))         c='#3ddc84'
+                    else if (line.includes('❌')||line.includes('failed')||line.includes('Error')) c='#ff6b6b'
+                    else if (line.includes('🔍')||line.includes('🐳'))        c='#4f8eff'
+                    else if (line.includes('🔨')||line.includes('📦'))        c='#ffc53d'
+                    else if (line.startsWith('Step')||line.startsWith('--->')) c='rgba(240,242,245,0.7)'
+                    else if (line.startsWith('FROM')||line.startsWith('RUN')||line.startsWith('COPY')) c='#c678dd'
+                    return <div key={i} style={{color:c}}>{line||'\u00a0'}</div>
+                  })
+                : deployment.status === 'QUEUED'
+                  ? <div className="animate-pulse" style={{color:'var(--text3)'}}>⏳ Queued — waiting for worker to pick up job...</div>
+                  : deployment.status === 'BUILDING'
+                    ? <div className="animate-pulse" style={{color:'var(--text3)'}}>🔨 Build starting — logs will appear shortly...</div>
+                    : <div style={{color:'var(--text3)'}}>No log available</div>
+              }
               {isActive&&<div className="flex items-center gap-1 mt-1"><span className="inline-block w-2 h-4 animate-pulse" style={{background:'var(--text)'}}/></div>}
             </div>
           </div>

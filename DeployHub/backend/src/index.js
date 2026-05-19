@@ -68,6 +68,68 @@ app.use('/api/nginx',       requireAuth, nginxRoutes);
 // ── Global error handler ─────────────────────────────────────────────────────
 app.use(errorHandler);
 
+// ── Startup: recover or fail orphaned in-progress deployments ────────────────
+// Two scenarios on server restart:
+//
+// A) Deployment was BUILDING when server died, but the EC2 container is
+//    actually running fine (the build + deploy finished, only the final
+//    prisma.update never ran). In this case we can RECOVER the deployment
+//    by reading the previewUrl from the PortAllocation record.
+//
+// B) Deployment was truly mid-flight (e.g. Docker build was running) and
+//    nothing made it to EC2. In this case we mark it FAILED.
+//
+// We distinguish by checking whether a PortAllocation exists for that
+// deployment — if it does, EC2 was reached and we recover; if not, we fail.
+
+const { prisma } = require('./utils/prisma');
+async function reconcileStuckDeployments() {
+  try {
+    const stuck = await prisma.deployment.findMany({
+      where: { status: { in: ['QUEUED', 'BUILDING'] } },
+    });
+ 
+    if (stuck.length === 0) return;
+    logger.warn(`[startup] Found ${stuck.length} stuck deployment(s) — reconciling...`);
+ 
+    for (const dep of stuck) {
+      // Check if EC2 port was allocated → means deploy reached EC2 successfully
+      const alloc = await prisma.portAllocation.findFirst({
+        where: { deploymentId: dep.id, active: true },
+      });
+ 
+      if (alloc && process.env.EC2_PUBLIC_DNS) {
+        // EC2 container is live — recover the deployment as SUCCESS
+        const recoveredUrl = dep.previewUrl || `http://${process.env.EC2_PUBLIC_DNS}:${alloc.hostPort}`;
+        await prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status:     'SUCCESS',
+            previewUrl: recoveredUrl,
+            hostPort:   alloc.hostPort,
+            finishedAt: new Date(),
+            buildLog:   (dep.buildLog || '') + '\n[Recovered after server restart — container is live]',
+          },
+        });
+        logger.info(`[startup] Recovered deployment ${dep.id} → ${recoveredUrl} (port ${alloc.hostPort})`);
+      } else {
+        // No EC2 allocation — deploy never finished, mark as FAILED
+        await prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status:     'FAILED',
+            finishedAt: new Date(),
+            buildLog:   (dep.buildLog || '') + '\n[Server restarted while deployment was in progress. Please redeploy.]',
+          },
+        });
+        logger.warn(`[startup] Marked deployment ${dep.id} as FAILED (no EC2 allocation found)`);
+      }
+    }
+  } catch (err) {
+    logger.error('[startup] Failed to reconcile stuck deployments:', err.message);
+  }
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(env.PORT, () => {
   logger.info(`DeployHub backend running on port ${env.PORT} [${env.NODE_ENV}]`);

@@ -133,6 +133,10 @@ export const api = {
   redeploy: (id: string, token: string) =>
     fetchWithAuth(`/api/deployments/${id}/redeploy`, { method: 'POST' }, token),
 
+  // Alias used by the deployment detail page
+  redeployFromDeployment: (id: string, token: string) =>
+    fetchWithAuth(`/api/deployments/${id}/redeploy`, { method: 'POST' }, token),
+
   cancelDeployment: (id: string, token: string) =>
     fetchWithAuth(`/api/deployments/${id}`, { method: 'DELETE' }, token),
 }

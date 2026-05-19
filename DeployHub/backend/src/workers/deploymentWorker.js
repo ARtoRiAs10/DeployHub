@@ -24,6 +24,26 @@ deploymentQueue.process('deploy', 1, async (job) => {
   } = job.data;
 
   let buildLog = '';
+  let flushTimer = null;
+
+  // Flush buildLog to DB every 2 seconds while building so the frontend
+  // polling sees live log output instead of an empty string until job ends.
+  function startLogFlush() {
+    if (flushTimer) return;
+    flushTimer = setInterval(async () => {
+      try {
+        await prisma.deployment.update({
+          where: { id: deploymentId },
+          data:  { buildLog },
+        });
+      } catch { /* non-fatal — keep building */ }
+    }, 2000);
+  }
+
+  function stopLogFlush() {
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+  }
+
   const log = (msg) => {
     const line = typeof msg === 'string' ? msg : JSON.stringify(msg);
     buildLog += line + '\n';
@@ -35,6 +55,7 @@ deploymentQueue.process('deploy', 1, async (job) => {
 
   try {
     await prisma.deployment.update({ where: { id: deploymentId }, data: { status: 'BUILDING', buildLog: '' } });
+    startLogFlush();
 
     // ── Step 1: Get source ────────────────────────────────────────────────
     await fs.ensureDir(repoDir);
@@ -140,6 +161,7 @@ deploymentQueue.process('deploy', 1, async (job) => {
       });
       await cleanup(null, imageTag);
       await fs.remove(repoDir).catch(() => {});
+      stopLogFlush();
       await prisma.deployment.update({
         where: { id: deploymentId },
         data: {
@@ -201,12 +223,14 @@ deploymentQueue.process('deploy', 1, async (job) => {
     });
     await fs.remove(repoDir).catch(() => {});
     await fs.remove(outputPath).catch(() => {});
+    stopLogFlush();
     log(`✅ S3 deployment live: ${previewUrl}`);
     return { success: true, previewUrl };
 
   } catch (err) {
     log(`❌ Build failed: ${err.message}`);
     logger.error(`Deployment ${deploymentId} failed:`, err);
+    stopLogFlush();
     await prisma.deployment.update({
       where: { id: deploymentId },
       data: { status: 'FAILED', errorMsg: err.message, buildLog, finishedAt: new Date() },
