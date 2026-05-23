@@ -1,0 +1,121 @@
+name: Deploy — Worker to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'             # only re-deploy when backend code changes
+      - '.github/workflows/deploy.yml'
+
+  workflow_dispatch:             # allow manual trigger from GitHub Actions UI
+
+# ── Secrets required (GitHub → Settings → Secrets and variables → Actions) ───
+#
+#   EC2_HOST          EC2 public DNS  e.g. ec2-xx-xx-xx-xx.compute-1.amazonaws.com
+#   EC2_USER          SSH user        e.g. ubuntu  (Amazon Linux: ec2-user)
+#   EC2_SSH_KEY       Contents of your .pem private key file
+#
+#   These are passed to the worker's .env on EC2:
+#   DATABASE_URL, REDIS_URL, CLERK_SECRET_KEY,
+#   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#   S3_BUCKET_NAME, EC2_INSTANCE_ID, EC2_PUBLIC_DNS,
+#   OPENROUTER_API_KEY  (optional)
+
+jobs:
+  # ── Job 1: Run tests first — never deploy broken code ──────────────────────
+  test:
+    name: Tests must pass before deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run all tests
+        working-directory: backend
+        run: npm test
+        env:
+          NODE_ENV: test
+
+  # ── Job 2: Deploy worker to EC2 ────────────────────────────────────────────
+  deploy-worker:
+    name: Deploy worker to EC2
+    runs-on: ubuntu-latest
+    needs: test          # only runs if tests pass
+
+    steps:
+      - name: SSH into EC2 and deploy worker
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:        ${{ secrets.EC2_HOST }}
+          username:    ${{ secrets.EC2_USER }}
+          key:         ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true    # stop on first error
+          script: |
+            set -e
+
+            REPO_DIR="$HOME/DeployHub"
+            BACKEND_DIR="$REPO_DIR/DeployHub/backend"
+
+            # ── 1. Pull latest code ─────────────────────────────────────────
+            if [ ! -d "$REPO_DIR" ]; then
+              echo "→ Fresh clone..."
+              git clone https://github.com/${{ github.repository }} "$REPO_DIR"
+            else
+              echo "→ Pulling latest..."
+              cd "$REPO_DIR" && git pull origin main
+            fi
+
+            cd "$BACKEND_DIR"
+
+            # ── 2. Install dependencies ─────────────────────────────────────
+            echo "→ Installing dependencies..."
+            npm ci --omit=dev
+
+            # ── 3. Write .env from GitHub secrets ──────────────────────────
+            echo "→ Writing .env..."
+            cat > .env << 'ENVEOF'
+            NODE_ENV=production
+            ENABLE_WORKER=true
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            REDIS_URL=${{ secrets.REDIS_URL }}
+            CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
+            AWS_REGION=${{ secrets.AWS_REGION }}
+            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+            EC2_INSTANCE_ID=${{ secrets.EC2_INSTANCE_ID }}
+            EC2_PUBLIC_DNS=${{ secrets.EC2_PUBLIC_DNS }}
+            FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+            OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+            ENVEOF
+
+            # ── 4. Install pm2 globally if not present ──────────────────────
+            if ! command -v pm2 &> /dev/null; then
+              echo "→ Installing pm2..."
+              npm install -g pm2
+            fi
+
+            # ── 5. Restart worker (or start it fresh if first deploy) ───────
+            echo "→ Restarting worker..."
+            if pm2 list | grep -q "deployhub-worker"; then
+              pm2 restart deployhub-worker
+            else
+              pm2 start src/workers/deploymentWorker.js \
+                --name deployhub-worker \
+                --time                          # adds timestamps to logs
+              pm2 save                          # persist across reboots
+            fi
+
+            # ── 6. Confirm it's running ─────────────────────────────────────
+            sleep 3
+            pm2 list | grep deployhub-worker
+            echo "✅ Worker deployed successfully"

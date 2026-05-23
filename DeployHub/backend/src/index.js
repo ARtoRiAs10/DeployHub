@@ -17,8 +17,10 @@ const { requireAuth }  = require('./middleware/auth');
 const projectRoutes    = require('./controllers/projectController');
 const deploymentRoutes = require('./controllers/deploymentController');
 const nginxRoutes      = require('./controllers/nginxController');
-require('./workers/deploymentWorker');
 
+if (process.env.NODE_ENV === 'production' || process.env.ENABLE_WORKER === 'true'){
+  require('./workers/deploymentWorker');
+}
 const app = express();
 
 app.set('trust proxy', true);
@@ -131,12 +133,14 @@ async function reconcileStuckDeployments() {
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(env.PORT, () => {
-  logger.info(`DeployHub backend running on port ${env.PORT} [${env.NODE_ENV}]`);
-  logger.info(`CORS origin: ${env.FRONTEND_URL}`);
-  logger.info(`AI detection: ${env.OPENROUTER_API_KEY ? 'enabled' : 'disabled (no OPENROUTER_API_KEY)'}`);
-  logger.info(`EC2 target:   ${env.EC2_INSTANCE_ID || 'not configured'}`);
-  logger.info(`S3 bucket:    ${env.S3_BUCKET_NAME  || 'not configured'}`);
+if (require.main === module) {
+  app.listen(env.PORT, () => {
+    logger.info(`DeployHub backend running on port ${env.PORT} [${env.NODE_ENV}]`);
+    logger.info(`CORS origin: ${env.FRONTEND_URL}`);
+    logger.info(`AI detection: ${env.OPENROUTER_API_KEY ? 'enabled' : 'disabled (no OPENROUTER_API_KEY)'}`);
+    logger.info(`EC2 target:   ${env.EC2_INSTANCE_ID || 'not configured'}`);
+    logger.info(`S3 bucket:    ${env.S3_BUCKET_NAME  || 'not configured'}`);
 });
+}
 
 module.exports = app;

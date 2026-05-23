@@ -8,12 +8,14 @@
     "migrate": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "generate": "prisma generate",
+    "postinstall": "prisma generate",
     "test": "jest --config jest.config.js --forceExit",
     "test:unit": "jest --config jest.config.js --testPathPattern=tests/unit --forceExit",
     "test:integration": "jest --config jest.config.js --testPathPattern=tests/integration --forceExit",
     "test:bdd": "jest --config jest.config.js --testPathPattern=tests/bdd --forceExit",
     "test:coverage": "jest --config jest.config.js --coverage --forceExit",
     "test:ci": "jest --config jest.config.js --forceExit --ci --coverage --coverageReporters=lcov --coverageReporters=json --coverageReporters=text"
+    
   },
   "dependencies": {
     "@aws-sdk/client-ecr": "^3.540.0",

@@ -1,45 +1,56 @@
 'use strict';
-const Bull = require('bull');
+const Bull    = require('bull');
+const IORedis = require('ioredis');
 
-// EC2 deployments involve: clone → docker build → ECR push → SSM deploy.
-// The whole flow can take 5–15 minutes for a cold image.
+// ── Upstash (and any rediss:// TLS endpoint) needs two specific ioredis flags:
+//   • maxRetriesPerRequest: null  — lets Bull's internal blocking commands work
+//   • enableReadyCheck: false     — Upstash doesn't support the Redis WAIT command
 //
-// Bull's default lockDuration is 30 seconds — meaning if the worker doesn't
-// call job.progress() or heartbeat within 30s, Bull marks the job "stalled"
-// and RE-QUEUES it. This causes the deployment to run again on server restart
-// or even mid-flight, producing duplicate containers on EC2.
-//
-// Fix: set lockDuration to 30 minutes (well above any realistic deploy time)
-// and lockRenewTime to half of that so the worker keeps renewing the lock.
-// stalledInterval controls how often Bull checks for stalled jobs — set it
-// high enough that a slow SSM command doesn't trigger a false stall.
+// Bull's built-in URL parser doesn't set these, so we hand Bull a createClient
+// factory instead of a raw URL. This works for both plain redis:// (local dev)
+// and rediss:// (Upstash / any TLS Redis).
 
-const LOCK_DURATION    = 30 * 60 * 1000;  // 30 min — max time for one deployment
-const LOCK_RENEW_TIME  = 15 * 60 * 1000;  // renew every 15 min
-const STALLED_INTERVAL =  5 * 60 * 1000;  // check for stalled jobs every 5 min
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const USE_TLS   = REDIS_URL.startsWith('rediss://');
+
+function makeRedisClient() {
+  return new IORedis(REDIS_URL, {
+    maxRetriesPerRequest: null,   // required by Bull's blocking pop commands
+    enableReadyCheck:     false,  // required by Upstash (no WAIT support)
+    tls: USE_TLS ? { rejectUnauthorized: false } : undefined,
+  });
+}
+
+const LOCK_DURATION    = 30 * 60 * 1000;
+const LOCK_RENEW_TIME  = 15 * 60 * 1000;
+const STALLED_INTERVAL =  5 * 60 * 1000;
 
 const deploymentQueue = new Bull('deployments', {
-  redis: process.env.REDIS_URL || 'redis://localhost:6379',
+  // createClient is called by Bull for 3 connection roles:
+  //   'client'     — normal commands (add, update, etc.)
+  //   'subscriber' — pub/sub for job events
+  //   'bclient'    — blocking pop (used by the worker)
+  // Each must be its own IORedis instance — they cannot be shared.
+  createClient(type) {
+    return makeRedisClient();
+  },
 
   settings: {
     lockDuration:    LOCK_DURATION,
     lockRenewTime:   LOCK_RENEW_TIME,
     stalledInterval: STALLED_INTERVAL,
-    // How many times a stalled job can be restarted before being moved to failed.
-    // Set to 0: never auto-restart stalled jobs — let the startup cleanup in
-    // index.js mark them FAILED so the user can redeploy manually.
     maxStalledCount: 0,
   },
 
   defaultJobOptions: {
-    attempts:         1,     // never auto-retry a failed deployment
-    removeOnComplete: 50,    // keep last 50 completed jobs in Redis for history
-    removeOnFail:     100,   // keep last 100 failed jobs for debugging
+    attempts:         1,
+    removeOnComplete: 50,
+    removeOnFail:     100,
   },
 });
 
-deploymentQueue.on('error',   (err)  => console.error('[queue] error:', err.message));
-deploymentQueue.on('stalled', (job)  => console.warn(`[queue] job ${job.id} (deployment ${job.data?.deploymentId}) stalled — will NOT be auto-requeued (maxStalledCount=0)`));
+deploymentQueue.on('error',   (err) => console.error('[queue] error:', err.message));
+deploymentQueue.on('stalled', (job) => console.warn(`[queue] job ${job.id} (deployment ${job.data?.deploymentId}) stalled`));
 deploymentQueue.on('failed',  (job, err) => console.error(`[queue] job ${job.id} failed:`, err.message));
 
 module.exports = { deploymentQueue };

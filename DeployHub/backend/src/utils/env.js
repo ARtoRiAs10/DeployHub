@@ -13,7 +13,7 @@
 
 const REQUIRED = [
   { key: 'DATABASE_URL',       hint: 'PostgreSQL connection string. Example: postgresql://user:pass@localhost:5432/deployhub' },
-  { key: 'REDIS_URL',          hint: 'Redis connection string. Example: redis://localhost:6379' },
+  { key: 'REDIS_URL',          hint: 'Redis connection string. Local: redis://localhost:6379 | Upstash: rediss://default:<password>@<host>.upstash.io:6379' },
   { key: 'CLERK_SECRET_KEY',   hint: 'Get from https://dashboard.clerk.com → API Keys → Secret key (starts with sk_)' },
   { key: 'AWS_REGION',         hint: 'AWS region where your S3 bucket and EC2 live. Example: us-east-1' },
   { key: 'AWS_ACCESS_KEY_ID',  hint: 'IAM access key. Create at https://console.aws.amazon.com/iam/ with S3 + ECR + SSM permissions' },
