@@ -1,25 +1,24 @@
-name: Deploy — Worker to EC2
+name: Deploy — Backend & Worker to EC2
 
 on:
   push:
     branches: [main]
     paths:
-      - 'backend/**'             # only re-deploy when backend code changes
+      - 'backend/**'
       - '.github/workflows/deploy.yml'
 
   workflow_dispatch:             # allow manual trigger from GitHub Actions UI
 
 # ── Secrets required (GitHub → Settings → Secrets and variables → Actions) ───
 #
-#   EC2_HOST          EC2 public DNS  e.g. ec2-xx-xx-xx-xx.compute-1.amazonaws.com
-#   EC2_USER          SSH user        e.g. ubuntu  (Amazon Linux: ec2-user)
-#   EC2_SSH_KEY       Contents of your .pem private key file
+#   EC2_HOST               EC2 public DNS  e.g. ec2-xx-xx.compute-1.amazonaws.com
+#   EC2_USER               SSH user        e.g. ubuntu  (Amazon Linux: ec2-user)
+#   EC2_SSH_KEY            Full contents of your .pem private key file
 #
-#   These are passed to the worker's .env on EC2:
 #   DATABASE_URL, REDIS_URL, CLERK_SECRET_KEY,
 #   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 #   S3_BUCKET_NAME, EC2_INSTANCE_ID, EC2_PUBLIC_DNS,
-#   OPENROUTER_API_KEY  (optional)
+#   FRONTEND_URL, OPENROUTER_API_KEY (optional)
 
 jobs:
   # ── Job 1: Run tests first — never deploy broken code ──────────────────────
@@ -45,20 +44,20 @@ jobs:
         env:
           NODE_ENV: test
 
-  # ── Job 2: Deploy worker to EC2 ────────────────────────────────────────────
-  deploy-worker:
-    name: Deploy worker to EC2
+  # ── Job 2: Deploy backend server + worker to EC2 ───────────────────────────
+  deploy:
+    name: Deploy to EC2
     runs-on: ubuntu-latest
-    needs: test          # only runs if tests pass
+    needs: test
 
     steps:
-      - name: SSH into EC2 and deploy worker
+      - name: SSH into EC2 and deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host:        ${{ secrets.EC2_HOST }}
           username:    ${{ secrets.EC2_USER }}
           key:         ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true    # stop on first error
+          script_stop: true
           script: |
             set -e
 
@@ -82,9 +81,10 @@ jobs:
 
             # ── 3. Write .env from GitHub secrets ──────────────────────────
             echo "→ Writing .env..."
-            cat > .env << 'ENVEOF'
+            cat > .env << ENVEOF
             NODE_ENV=production
             ENABLE_WORKER=true
+            PORT=4000
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             REDIS_URL=${{ secrets.REDIS_URL }}
             CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
@@ -104,18 +104,41 @@ jobs:
               npm install -g pm2
             fi
 
-            # ── 5. Restart worker (or start it fresh if first deploy) ───────
-            echo "→ Restarting worker..."
+            # ── 5. Restart or start backend server (Express) ────────────────
+            echo "→ Deploying backend server..."
+            if pm2 list | grep -q "deployhub-backend"; then
+              pm2 restart deployhub-backend
+            else
+              pm2 start src/index.js \
+                --name deployhub-backend \
+                --time
+              pm2 save
+            fi
+
+            # ── 6. Restart or start worker (Bull queue processor) ───────────
+            # Note: worker is also loaded inside index.js via the ENABLE_WORKER
+            # flag — but running it as a separate pm2 process gives you
+            # independent logs and the ability to restart it without touching
+            # the API server.
+            echo "→ Deploying worker..."
             if pm2 list | grep -q "deployhub-worker"; then
               pm2 restart deployhub-worker
             else
               pm2 start src/workers/deploymentWorker.js \
                 --name deployhub-worker \
-                --time                          # adds timestamps to logs
-              pm2 save                          # persist across reboots
+                --time
+              pm2 save
             fi
 
-            # ── 6. Confirm it's running ─────────────────────────────────────
+            # ── 7. Make both survive EC2 reboots ────────────────────────────
+            pm2 save
+            pm2 startup | tail -1 | bash || true
+
+            # ── 8. Confirm both are running ─────────────────────────────────
             sleep 3
-            pm2 list | grep deployhub-worker
-            echo "✅ Worker deployed successfully"
+            echo ""
+            echo "── pm2 process list ──"
+            pm2 list
+            echo ""
+            pm2 list | grep -q "deployhub-backend" && echo "✅ Backend server running" || echo "❌ Backend server NOT running"
+            pm2 list | grep -q "deployhub-worker"  && echo "✅ Worker running"         || echo "❌ Worker NOT running"
