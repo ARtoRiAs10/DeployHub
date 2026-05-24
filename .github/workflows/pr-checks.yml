@@ -21,14 +21,14 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - name: Install backend dependencies
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm ci
 
       - name: Run unit tests (fast feedback)
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:unit
         env:
           NODE_ENV: test
@@ -50,17 +50,17 @@ jobs:
         with:
           filters: |
             backend:
-              - 'backend/src/**'
-              - 'backend/tests/**'
-              - 'backend/package*.json'
+              - 'DeployHub/backend/src/**'
+              - 'DeployHub/backend/tests/**'
+              - 'DeployHub/backend/package*.json'
             frontend:
-              - 'frontend/src/**'
-              - 'frontend/package*.json'
+              - 'DeployHub/frontend/src/**'
+              - 'DeployHub/frontend/package*.json'
             detector:
-              - 'backend/src/services/detector/**'
-              - 'backend/src/services/frameworkDetector.js'
-              - 'backend/src/services/dockerfileGenerator.js'
-              - 'backend/src/workers/deploymentWorker.js'
+              - 'DeployHub/backend/src/services/detector/**'
+              - 'DeployHub/backend/src/services/frameworkDetector.js'
+              - 'DeployHub/backend/src/services/dockerfileGenerator.js'
+              - 'DeployHub/backend/src/workers/deploymentWorker.js'
 
   # ─────────────────────────────────────────────────────────────────────────
   # Full backend test suite — only when backend files changed
@@ -77,28 +77,28 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: Unit tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:unit
         env: { NODE_ENV: test }
 
       - name: Integration tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:integration
         env: { NODE_ENV: test }
 
       - name: BDD tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:bdd
         env: { NODE_ENV: test }
 
       - name: Coverage check (must meet thresholds)
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:ci
         env: { NODE_ENV: test }
 
@@ -106,9 +106,9 @@ jobs:
         uses: ArtiomTr/jest-coverage-report-action@v2
         if: always()
         with:
-          working-directory: backend
-          coverage-file: backend/coverage/report.json
-          base-coverage-file: backend/coverage/report.json
+          working-directory: DeployHub/backend
+          coverage-file: DeployHub/backend/coverage/report.json
+          base-coverage-file: DeployHub/backend/coverage/report.json
         continue-on-error: true
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -126,23 +126,23 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: Run detector unit tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npx jest --testPathPattern="detector|dockerfileGenerator|deploymentWorker" --runInBand --forceExit --verbose
         env: { NODE_ENV: test }
 
       - name: Run BDD scenarios
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:bdd
         env: { NODE_ENV: test }
 
       - name: Assert isBackend routing is correct for all frameworks
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: |
           node -e "
           const { detectFromCuratedList } = require('./src/services/detector/curated');
@@ -150,7 +150,6 @@ jobs:
           const fs = require('fs-extra');
 
           const CASES = [
-            // [files, expectedFramework, expectedIsBackend]
             [{ 'package.json': JSON.stringify({ dependencies:{ next:'^14' }, scripts:{ build:'next build' } }) }, 'nextjs', true ],
             [{ 'package.json': JSON.stringify({ dependencies:{ nuxt:'^3' }, scripts:{ build:'nuxt build' } }) },  'nuxt',   true ],
             [{ 'package.json': JSON.stringify({ devDependencies:{ vite:'^5', '@vitejs/plugin-react':'^4' }, scripts:{ build:'vite build' } }) }, 'vite', false ],
@@ -197,17 +196,17 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: DeployHub/frontend/package-lock.json
 
       - run: npm ci
-        working-directory: frontend
+        working-directory: DeployHub/frontend
 
       - name: TypeScript check
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: npx tsc --noEmit
 
       - name: ESLint
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: npx next lint
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -221,13 +220,11 @@ jobs:
     steps:
       - name: Evaluate results
         run: |
-          # smoke-tests always runs — must pass
           if [[ "${{ needs.smoke-tests.result }}" != "success" ]]; then
             echo "Smoke tests failed"
             exit 1
           fi
 
-          # Other jobs may be skipped (no relevant changes) — skipped is OK, failed is not
           for job in backend-full detector-regression frontend-typecheck; do
             result=$(echo '${{ toJSON(needs) }}' | node -e "
               const n=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));

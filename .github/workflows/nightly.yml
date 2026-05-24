@@ -24,13 +24,13 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: All tests with coverage
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:ci
         env: { NODE_ENV: test }
 
@@ -38,7 +38,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: backend/coverage/lcov.info
+          files: DeployHub/backend/coverage/lcov.info
           flags: nightly-node${{ matrix.node }}
           fail_ci_if_error: false
 
@@ -56,20 +56,19 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: Test scanner against go_redis repo structure
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: |
           node -e "
           const { detectFromCuratedList } = require('./src/services/detector/curated');
           const fs = require('fs-extra'), path = require('path'), os = require('os');
 
           async function run() {
-            // Reproduce the exact go_redis structure that caused the bug
             const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'go-redis-'));
             try {
               await fs.writeFile(path.join(dir, 'go.mod'), 'module github.com/ARtorias742/Redis\n\ngo 1.22\n\nrequire (\n\tgithub.com/sirupsen/logrus v1.9.3\n\tgopkg.in/yaml.v3 v3.0.1\n)\n');
@@ -83,7 +82,6 @@ jobs:
               const r = await detectFromCuratedList(dir);
               console.log('Detected:', JSON.stringify(r, null, 2));
 
-              // Critical assertions
               if (r.framework !== 'go')            throw new Error('Expected go, got ' + r.framework);
               if (r.isBackend !== true)            throw new Error('Expected isBackend=true');
               if (r.goMainPkg !== 'cmd')           throw new Error('Expected goMainPkg=cmd, got ' + r.goMainPkg);

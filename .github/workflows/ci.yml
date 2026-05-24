@@ -10,15 +10,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# ── Secrets used in this workflow ─────────────────────────────────────────────
-# Set these in GitHub → Settings → Secrets and variables → Actions:
-#
-#   CODECOV_TOKEN          (optional) codecov.io upload token
-#
-# The following are NOT needed in CI because tests mock all external services:
-#   DATABASE_URL, REDIS_URL, AWS_*, CLERK_*, EC2_*, S3_BUCKET_NAME
-# They ARE needed in staging/production deployment workflows (deploy.yml).
-
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # Job 1: Backend Tests (unit + integration + BDD)
@@ -38,34 +29,32 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - name: Install backend dependencies
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm ci
 
-      # Tests mock all external services (AWS, Docker, Redis, Clerk, Prisma).
-      # Only NODE_ENV=test is needed — no real secrets required.
       - name: Run unit tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:unit
         env:
           NODE_ENV: test
 
       - name: Run integration tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:integration
         env:
           NODE_ENV: test
 
       - name: Run BDD tests
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:bdd
         env:
           NODE_ENV: test
 
       - name: Coverage report
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: npm run test:ci
         env:
           NODE_ENV: test
@@ -75,7 +64,7 @@ jobs:
         if: matrix.node == '20'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: backend/coverage/lcov.info
+          files: DeployHub/backend/coverage/lcov.info
           flags: backend
           fail_ci_if_error: false
 
@@ -93,16 +82,14 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: DeployHub/frontend/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: npm ci
 
-      # Use placeholder values for build-time env vars.
-      # Real values never go into CI — they're set in production via GitHub Secrets.
       - name: Create frontend .env.local for type-checking
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: |
           cat > .env.local << 'EOF'
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_placeholder_for_ci_type_check
@@ -111,18 +98,16 @@ jobs:
           EOF
 
       - name: TypeScript type check
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: npx tsc --noEmit
 
       - name: ESLint
-        working-directory: frontend
+        working-directory: DeployHub/frontend
         run: npx next lint --max-warnings 0
-        continue-on-error: true  # lint warnings shouldn't block merges
+        continue-on-error: true
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 3: Env file validation
-  # Checks that .env.example contains all required variables
-  # and that no real secrets are accidentally committed.
   # ─────────────────────────────────────────────────────────────────────────
   env-validation:
     name: Env File Validation
@@ -133,11 +118,10 @@ jobs:
 
       - name: Verify .env files are NOT committed
         run: |
-          # These files must never appear in git — fail immediately if they do
           FORBIDDEN=(
-            "backend/.env"
-            "frontend/.env.local"
-            "frontend/.env"
+            "DeployHub/backend/.env"
+            "DeployHub/frontend/.env.local"
+            "DeployHub/frontend/.env"
             ".env"
           )
           FOUND=0
@@ -159,7 +143,7 @@ jobs:
         run: |
           node -e "
           const fs = require('fs');
-          const example = fs.readFileSync('backend/.env.example', 'utf8');
+          const example = fs.readFileSync('DeployHub/backend/.env.example', 'utf8');
           const REQUIRED = [
             'DATABASE_URL', 'REDIS_URL', 'CLERK_SECRET_KEY',
             'AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
@@ -167,35 +151,33 @@ jobs:
           ];
           const missing = REQUIRED.filter(k => !example.includes(k));
           if (missing.length > 0) {
-            console.error('Missing from backend/.env.example:', missing.join(', '));
+            console.error('Missing from DeployHub/backend/.env.example:', missing.join(', '));
             process.exit(1);
           }
-          console.log('✓ backend/.env.example has all required keys');
+          console.log('✓ DeployHub/backend/.env.example has all required keys');
           "
 
       - name: Verify frontend .env.local.example has required keys
         run: |
           node -e "
           const fs = require('fs');
-          const example = fs.readFileSync('frontend/.env.local.example', 'utf8');
+          const example = fs.readFileSync('DeployHub/frontend/.env.local.example', 'utf8');
           const REQUIRED = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'NEXT_PUBLIC_API_URL'];
           const missing = REQUIRED.filter(k => !example.includes(k));
           if (missing.length > 0) {
-            console.error('Missing from frontend/.env.local.example:', missing.join(', '));
+            console.error('Missing from DeployHub/frontend/.env.local.example:', missing.join(', '));
             process.exit(1);
           }
-          console.log('✓ frontend/.env.local.example has all required keys');
+          console.log('✓ DeployHub/frontend/.env.local.example has all required keys');
           "
 
       - name: Scan for accidentally leaked secrets patterns
         run: |
-          # Scan committed files for patterns that look like real secrets
-          # (not placeholder values from .example files)
           PATTERNS=(
-            'sk_live_[A-Za-z0-9]{20,}'     # Clerk live secret key
-            'sk_test_[A-Za-z0-9]{30,}'     # Clerk test secret key (long = real)
-            'AKIA[0-9A-Z]{16}'             # AWS access key
-            'sk-or-v1-[a-f0-9]{60,}'       # OpenRouter key
+            'sk_live_[A-Za-z0-9]{20,}'
+            'sk_test_[A-Za-z0-9]{30,}'
+            'AKIA[0-9A-Z]{16}'
+            'sk-or-v1-[a-f0-9]{60,}'
           )
           FOUND=0
           for pattern in "${PATTERNS[@]}"; do
@@ -224,13 +206,13 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
 
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: Validate all Dockerfile templates
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: |
           node -e "
           const { TEMPLATES } = require('./src/services/dockerfileGenerator');
@@ -270,16 +252,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: DeployHub/backend/package-lock.json
+
       - run: npm ci
-        working-directory: backend
+        working-directory: DeployHub/backend
 
       - name: Assert all 18 frameworks route correctly
-        working-directory: backend
+        working-directory: DeployHub/backend
         run: |
           node -e "
           function resolveIsBackend(det,job){return det===true?true:(job!=null?Boolean(job):false);}
