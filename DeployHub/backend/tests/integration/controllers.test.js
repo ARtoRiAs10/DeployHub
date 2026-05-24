@@ -23,11 +23,14 @@ const mockPrisma = {
     delete:    jest.fn(),
   },
   deployment: {
-    findMany:  jest.fn(),
-    findFirst: jest.fn(),
-    create:    jest.fn(),
-    update:    jest.fn(),
-    deleteMany:  jest.fn(),
+    findMany:   jest.fn(),
+    findFirst:  jest.fn(),
+    create:     jest.fn(),
+    update:     jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  portAllocation: {
+    updateMany: jest.fn(),
   },
 };
 jest.mock('../../src/utils/prisma', () => ({ prisma: mockPrisma }));
@@ -38,6 +41,14 @@ jest.mock('../../src/queue/deploymentQueue', () => ({ deploymentQueue: mockQueue
 
 // ── Mock worker (it auto-requires and connects to Redis on load) ───────────
 jest.mock('../../src/workers/deploymentWorker', () => ({}));
+
+// ── Mock nginxConfigService — controller calls deregisterBackendFromNginx
+//    during project delete (fire-and-forget). Without this mock the real
+//    service tries to SSH into EC2 and throws in the test environment.
+jest.mock('../../src/services/nginxConfigService', () => ({
+  deregisterBackendFromNginx: jest.fn().mockResolvedValue(undefined),
+  registerBackendWithNginx:   jest.fn().mockResolvedValue(undefined),
+}));
 
 // ── Mock auth middleware — injects userId directly ─────────────────────────
 jest.mock('../../src/middleware/auth', () => ({
@@ -194,10 +205,24 @@ describe('ProjectController — REST API', () => {
   // ── DELETE /api/projects/:id ─────────────────────────────────────────────
   describe('DELETE /api/projects/:id', () => {
     test('200 — deletes project and returns deleted:true', async () => {
-      mockPrisma.project.findFirst.mockResolvedValue({ id:'p1', userId:'test-user-123' });
-      mockPrisma.deployment.deleteMany.mockResolvedValue({ count: 0 }); 
+      mockPrisma.project.findFirst.mockResolvedValue({ id:'p1', userId:'test-user-123', isBackend:false });
+      mockPrisma.portAllocation.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.deployment.deleteMany.mockResolvedValue({ count: 0 });
       mockPrisma.project.delete.mockResolvedValue({});
+
       const res = await supertest(app).delete('/api/projects/p1');
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(true);
+    });
+
+    test('200 — deletes backend project (skips nginx when no EC2_INSTANCE_ID)', async () => {
+      mockPrisma.project.findFirst.mockResolvedValue({ id:'p2', userId:'test-user-123', isBackend:true });
+      mockPrisma.portAllocation.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.deployment.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.project.delete.mockResolvedValue({});
+
+      // EC2_INSTANCE_ID not set in test env → nginx call is skipped by the controller
+      const res = await supertest(app).delete('/api/projects/p2');
       expect(res.status).toBe(200);
       expect(res.body.deleted).toBe(true);
     });
