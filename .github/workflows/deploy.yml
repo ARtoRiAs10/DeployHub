@@ -9,6 +9,10 @@ on:
 
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+
 jobs:
   # ── Job 1: Run tests first — never deploy broken code ──────────────────────
   test:
@@ -20,7 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          
 
       - name: Install dependencies
         working-directory: DeployHub/backend

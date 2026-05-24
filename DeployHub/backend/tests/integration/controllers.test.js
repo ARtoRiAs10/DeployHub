@@ -27,6 +27,7 @@ const mockPrisma = {
     findFirst: jest.fn(),
     create:    jest.fn(),
     update:    jest.fn(),
+    deleteMany:  jest.fn(),
   },
 };
 jest.mock('../../src/utils/prisma', () => ({ prisma: mockPrisma }));
@@ -194,6 +195,7 @@ describe('ProjectController — REST API', () => {
   describe('DELETE /api/projects/:id', () => {
     test('200 — deletes project and returns deleted:true', async () => {
       mockPrisma.project.findFirst.mockResolvedValue({ id:'p1', userId:'test-user-123' });
+      mockPrisma.deployment.deleteMany.mockResolvedValue({ count: 0 }); 
       mockPrisma.project.delete.mockResolvedValue({});
       const res = await supertest(app).delete('/api/projects/p1');
       expect(res.status).toBe(200);

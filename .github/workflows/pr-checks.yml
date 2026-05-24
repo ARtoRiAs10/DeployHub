@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
     types: [opened, synchronize, reopened, ready_for_review]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # Fast smoke test — runs on every PR commit, results in < 60s
