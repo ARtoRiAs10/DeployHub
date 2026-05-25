@@ -1,4 +1,4 @@
-# DeployHub — Vercel Clone
+# DeployHub 
 
 A full-stack deployment platform similar to Vercel. Deploy GitHub repos or ZIP files to S3 with auto-detected Dockerfiles.
 
